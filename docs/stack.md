@@ -9,6 +9,17 @@
 | Gestion des dépendances | uv |
 | Déploiement | Local (localhost) |
 
+## Architecture backend
+
+```
+app/
+├── routers/       ← couche HTTP (thin), endpoints /v1/
+├── services/      ← logique métier
+├── repositories/  ← accès données (SQL)
+├── schemas/       ← DTOs Pydantic (request/response)
+└── exceptions.py  ← handler global + exceptions custom
+```
+
 ## Dépendances backend
 
 FastAPI, SQLAlchemy (async), asyncpg, pydantic-settings, uvicorn, alembic

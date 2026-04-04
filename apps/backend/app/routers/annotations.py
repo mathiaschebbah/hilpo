@@ -1,43 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import text
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.repositories.annotations import AnnotationRepository
+from app.schemas.annotations import AnnotationCreate, AnnotationOut
+from app.services.annotations import AnnotationService
 
-router = APIRouter(prefix="/annotations", tags=["annotations"])
-
-
-class AnnotationCreate(BaseModel):
-    ig_media_id: int
-    category_id: int
-    visual_format_id: int
-    strategy: str  # "Organic" | "Brand Content"
-    annotator: str = "mathias"
+router = APIRouter(prefix="/v1/annotations", tags=["annotations"])
 
 
-@router.post("/")
+def get_service(db: AsyncSession = Depends(get_db)) -> AnnotationService:
+    return AnnotationService(AnnotationRepository(db))
+
+
+@router.post("/", response_model=AnnotationOut, status_code=201)
 async def create_annotation(
-    annotation: AnnotationCreate,
-    db: AsyncSession = Depends(get_db),
+    data: AnnotationCreate,
+    annotator: str = "mathias",
+    service: AnnotationService = Depends(get_service),
 ):
-    """Enregistre une annotation humaine."""
-    if annotation.strategy not in ("Organic", "Brand Content"):
-        raise HTTPException(400, "strategy doit être 'Organic' ou 'Brand Content'")
-
-    result = await db.execute(
-        text("""
-            INSERT INTO annotations (ig_media_id, category_id, visual_format_id, strategy, annotator)
-            VALUES (:ig_media_id, :category_id, :visual_format_id, :strategy, :annotator)
-            ON CONFLICT (ig_media_id, annotator) DO UPDATE SET
-                category_id = EXCLUDED.category_id,
-                visual_format_id = EXCLUDED.visual_format_id,
-                strategy = EXCLUDED.strategy,
-                created_at = NOW()
-            RETURNING id
-        """),
-        annotation.model_dump(),
+    annotation = await service.create(data, annotator)
+    return JSONResponse(
+        status_code=201,
+        content=annotation.model_dump(mode="json"),
+        headers={"Location": f"/v1/annotations/{annotation.id}"},
     )
-    await db.commit()
-    row = result.mappings().first()
-    return {"id": row["id"]}
