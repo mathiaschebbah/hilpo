@@ -1,6 +1,8 @@
 # Schéma BDD
 
-Fichier : [`apps/backend/migrations/001_initial_schema.sql`](../apps/backend/migrations/001_initial_schema.sql)
+Fichiers :
+- [`001_initial_schema.sql`](../apps/backend/migrations/001_initial_schema.sql) — tables de base
+- [`002_experiment_infra.sql`](../apps/backend/migrations/002_experiment_infra.sql) — reproductibilité + simulations
 
 ## Tables
 
@@ -11,13 +13,25 @@ Fichier : [`apps/backend/migrations/001_initial_schema.sql`](../apps/backend/mig
 | `categories` | Lookup — 15 catégories éditoriales |
 | `visual_formats` | Lookup — 44 formats visuels |
 | `heuristic_labels` | Catégorisation v0 — heuristique imprécise (import CSV) |
-| `sample_posts` | Échantillon 2000 posts + assignation dev/test par seed |
+| `sample_posts` | Échantillon 2000 posts + split dev/test + ordre de présentation |
 | `annotations` | Annotations humaines (corrections/validations) |
 | `prompt_versions` | Prompts versionnés **par agent × scope** (type de post) |
-| `predictions` | Prédictions par agent + match vs annotation humaine |
+| `predictions` | Prédictions par agent + match auto-calculé par trigger |
 | `rewrite_logs` | Historique des réécritures de prompt (avant/après, raisonnement) |
 | `api_calls` | Traçabilité complète des appels API (tokens, coût, latence) |
-| `prompt_metrics` | Vue — accuracy agrégée par version de prompt × agent |
+| `simulation_runs` | Runs de simulation (Phase D) avec config, résultats, coûts |
+| `prompt_metrics` | Vue — accuracy agrégée par version de prompt × agent × simulation |
+
+## Reproductibilité
+
+- `sample_posts.presentation_order` — ordre de présentation déterministe (shuffled avec seed), plus de RANDOM()
+- `sample_posts.split` — dev (1563) / test (437), stratifié sur visual_format × strategy
+- `predictions.simulation_run_id` — distingue live (NULL) des simulations multi-splits
+- `api_calls.simulation_run_id` — idem pour la traçabilité des coûts
+
+## Match auto-calculé
+
+Trigger `trg_prediction_match` : à chaque INSERT/UPDATE sur `predictions`, compare `predicted_value` avec l'annotation humaine correspondante et met à jour `match` automatiquement.
 
 ## Modèle multi-agents
 
@@ -35,4 +49,3 @@ Un seul prompt actif par combinaison `(agent, scope)` — index unique partiel.
 - `UNIQUE (agent, scope) WHERE status = 'active'` — un seul prompt actif par agent × scope
 - `UNIQUE (ig_media_id, annotator)` — une annotation par post par annotateur
 - `UNIQUE (parent_ig_media_id, media_order)` — ordre des médias dans un carousel
-- `all_match GENERATED ALWAYS` — match global auto-calculé dans predictions

@@ -24,7 +24,7 @@ class PostRepository:
                 LEFT JOIN annotations a
                     ON a.ig_media_id = p.ig_media_id AND a.annotator = :annotator
                 WHERE a.id IS NULL
-                ORDER BY RANDOM()
+                ORDER BY sp.presentation_order
                 LIMIT 1
             """),
             {"annotator": annotator},

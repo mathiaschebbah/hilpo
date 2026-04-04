@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **2.1** — 2026-04-04
+> Version **2.2** — 2026-04-04
 
 ## Double dimension du projet
 
@@ -42,6 +42,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 2.2 | 2026-04-04 | Infra expérimentale : splits dev/test, ordre déterministe, trigger match, simulation_runs |
 | 2.1 | 2026-04-04 | Skill /setup pour initialisation contexte, skills versionnés dans git |
 | 2.0 | 2026-04-04 | GCS URLs signées, vue dataset, filtrage Views, conventions typo |
 | 1.9 | 2026-04-04 | Frontend React + shadcn/ui, Phase 1 quasi complète |

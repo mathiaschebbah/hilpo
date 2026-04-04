@@ -122,9 +122,9 @@ def import_media(cur):
     print(f"  ✓ post_media importés")
 
 
-def select_sample(cur, n=2000, seed=42):
-    """Sélectionne un échantillon stratifié de n posts."""
-    # Stratification sur visual_format × strategy (parmi les posts catégorisés)
+def select_sample(cur, n=2000, seed=42, test_ratio=0.2):
+    """Sélectionne un échantillon stratifié de n posts avec splits et ordre de présentation."""
+    # 1. Échantillonnage stratifié (Views uniquement)
     cur.execute(
         """
         INSERT INTO sample_posts (ig_media_id, seed)
@@ -151,9 +151,53 @@ def select_sample(cur, n=2000, seed=42):
         """,
         {"n": n, "seed": seed},
     )
-    cur.execute("SELECT COUNT(*) FROM sample_posts")
-    count = cur.fetchone()[0]
-    print(f"  ✓ {count} posts échantillonnés (stratifié, seed={seed})")
+
+    # 2. Assigner les splits dev/test (stratifié sur visual_format × strategy)
+    n_test = int(n * test_ratio)
+    cur.execute(
+        """
+        WITH ranked AS (
+            SELECT sp.ig_media_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY h.visual_format_id, h.strategy
+                       ORDER BY RANDOM()
+                   ) AS rn,
+                   CEIL(COUNT(*) OVER (PARTITION BY h.visual_format_id, h.strategy) * %(test_ratio)s) AS n_test_per_group
+            FROM sample_posts sp
+            JOIN heuristic_labels h ON h.ig_media_id = sp.ig_media_id
+        )
+        UPDATE sample_posts SET split = CASE
+            WHEN ig_media_id IN (SELECT ig_media_id FROM ranked WHERE rn <= n_test_per_group) THEN 'test'::split_type
+            ELSE 'dev'::split_type
+        END
+        """,
+        {"test_ratio": test_ratio},
+    )
+
+    # 3. Ordre de présentation déterministe (shuffle avec seed)
+    cur.execute(
+        """
+        WITH shuffled AS (
+            SELECT ig_media_id,
+                   ROW_NUMBER() OVER (ORDER BY RANDOM()) AS presentation_order
+            FROM sample_posts
+        )
+        UPDATE sample_posts sp
+        SET presentation_order = s.presentation_order
+        FROM shuffled s
+        WHERE sp.ig_media_id = s.ig_media_id
+        """
+    )
+
+    cur.execute(
+        """
+        SELECT split, COUNT(*) FROM sample_posts GROUP BY split ORDER BY split
+        """
+    )
+    splits = dict(cur.fetchall())
+    print(f"  ✓ {sum(splits.values())} posts échantillonnés (seed={seed})")
+    print(f"    dev: {splits.get('dev', 0)}, test: {splits.get('test', 0)}")
+    print(f"    ordre de présentation assigné")
 
 
 def main():
