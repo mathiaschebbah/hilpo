@@ -1,9 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-Dépôt associé au mémoire de Master 1 MIAGE, Université Paris Dauphine.
-
-**Auteur** : Mathias Chebbah
-**Encadrement professionnel** : Views, média digital centré sur la culture gen-z
+Dépôt associé au mémoire de Mathias CHEBBAH, Master 1 MIAGE, Université Paris Dauphine.
 
 ## Contexte
 
