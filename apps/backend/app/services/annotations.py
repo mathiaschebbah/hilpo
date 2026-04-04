@@ -13,5 +13,6 @@ class AnnotationService:
             visual_format_id=data.visual_format_id,
             strategy=data.strategy,
             annotator=annotator,
+            doubtful=data.doubtful,
         )
         return AnnotationOut(**{**row, "ig_media_id": str(row["ig_media_id"])})

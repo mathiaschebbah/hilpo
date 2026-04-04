@@ -43,6 +43,7 @@ class PostService:
                 category_id=row["ann_category_id"],
                 visual_format_id=row["ann_visual_format_id"],
                 strategy=row["ann_strategy"],
+                doubtful=row.get("ann_doubtful", False),
             )
 
         return NextPostOut(
@@ -103,6 +104,7 @@ class PostService:
                 annotation_category=r["annotation_category"],
                 annotation_visual_format=r["annotation_visual_format"],
                 annotation_strategy=r["annotation_strategy"],
+                annotation_doubtful=r.get("annotation_doubtful") or False,
                 is_annotated=r["annotation_id"] is not None,
             )
             for r in rows

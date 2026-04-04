@@ -34,6 +34,7 @@ class AnnotationValues(BaseModel):
     category_id: int | None = None
     visual_format_id: int | None = None
     strategy: str | None = None
+    doubtful: bool = False
 
 
 class NextPostOut(BaseModel):
@@ -66,6 +67,7 @@ class PostGridItem(BaseModel):
     annotation_category: str | None = None
     annotation_visual_format: str | None = None
     annotation_strategy: str | None = None
+    annotation_doubtful: bool = False
     is_annotated: bool = False
 
 

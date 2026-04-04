@@ -42,6 +42,7 @@ type NextPostResponse = {
     category_id: number | null
     visual_format_id: number | null
     strategy: string | null
+    doubtful: boolean
   } | null
 }
 
@@ -59,6 +60,7 @@ type PostGridResponse = {
     annotation_category: string | null
     annotation_visual_format: string | null
     annotation_strategy: string | null
+    annotation_doubtful: boolean
     is_annotated: boolean
   }>
   total: number
@@ -178,6 +180,7 @@ export async function submitAnnotation(data: {
   category_id: number
   visual_format_id: number
   strategy: 'Organic' | 'Brand Content'
+  doubtful?: boolean
 }, annotator = 'mathias'): Promise<AnnotationResponse> {
   console.log('[API] submitAnnotation', data)
   try {

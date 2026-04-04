@@ -57,7 +57,8 @@ class PostRepository:
                     h.subcategory AS heuristic_subcategory,
                     a.category_id AS ann_category_id,
                     a.visual_format_id AS ann_visual_format_id,
-                    a.strategy AS ann_strategy
+                    a.strategy AS ann_strategy,
+                    a.doubtful AS ann_doubtful
                 FROM sample_posts sp
                 JOIN posts p ON p.ig_media_id = sp.ig_media_id
                 LEFT JOIN heuristic_labels h ON h.ig_media_id = p.ig_media_id
@@ -111,6 +112,8 @@ class PostRepository:
             where_clauses.append("a.id IS NOT NULL")
         elif status == "pending":
             where_clauses.append("a.id IS NULL")
+        elif status == "doubtful":
+            where_clauses.append("a.doubtful = true")
 
         if category:
             where_clauses.append("c.name = :category")
@@ -132,6 +135,7 @@ class PostRepository:
                     ac.name AS annotation_category,
                     avf.name AS annotation_visual_format,
                     a.strategy AS annotation_strategy,
+                    a.doubtful AS annotation_doubtful,
                     a.id AS annotation_id,
                     (SELECT COALESCE(pm.thumbnail_url, pm.media_url) FROM post_media pm
                      WHERE pm.parent_ig_media_id = p.ig_media_id

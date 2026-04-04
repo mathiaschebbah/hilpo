@@ -16,6 +16,7 @@ class AnnotationCreate(BaseModel):
     category_id: int
     visual_format_id: int
     strategy: Literal["Organic", "Brand Content"]
+    doubtful: bool = False
 
     _normalize_media_id = field_validator("ig_media_id", mode="before")(normalize_media_id)
 
@@ -26,6 +27,7 @@ class AnnotationOut(BaseModel):
     category_id: int
     visual_format_id: int
     strategy: str
+    doubtful: bool
     annotator: str
     created_at: datetime
 

@@ -17,6 +17,7 @@ type GridItem = {
   annotation_category: string | null
   annotation_visual_format: string | null
   annotation_strategy: string | null
+  annotation_doubtful: boolean
   is_annotated: boolean
 }
 
@@ -70,12 +71,13 @@ export function PostGrid({ onOpenPost }: Props) {
           setOffset(0)
         }}>
           <SelectTrigger className="w-36 h-8 text-xs">
-            {statusFilter === 'annotated' ? 'Annotés' : statusFilter === 'pending' ? 'En attente' : 'Tous'}
+            {statusFilter === 'annotated' ? 'Annotés' : statusFilter === 'pending' ? 'En attente' : statusFilter === 'doubtful' ? 'Pas sûr' : 'Tous'}
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Tous</SelectItem>
             <SelectItem value="annotated">Annotés</SelectItem>
             <SelectItem value="pending">En attente</SelectItem>
+            <SelectItem value="doubtful">Pas sur</SelectItem>
           </SelectContent>
         </Select>
 
@@ -149,10 +151,16 @@ export function PostGrid({ onOpenPost }: Props) {
                 {/* Overlay statut */}
                 {item.is_annotated && (
                   <div className="absolute top-1.5 right-1.5">
-                    <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                        <path d="M20 6L9 17l-5-5"/>
-                      </svg>
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                      item.annotation_doubtful ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`}>
+                      {item.annotation_doubtful ? (
+                        <span className="text-white text-[10px] font-bold">?</span>
+                      ) : (
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                          <path d="M20 6L9 17l-5-5"/>
+                        </svg>
+                      )}
                     </div>
                   </div>
                 )}

@@ -93,7 +93,7 @@ export function useAnnotation() {
     if (ready) loadNext()
   }, [ready, loadNext])
 
-  const submit = async (categoryId: number, visualFormatId: number, strategy: 'Organic' | 'Brand Content') => {
+  const submit = async (categoryId: number, visualFormatId: number, strategy: 'Organic' | 'Brand Content', doubtful = false) => {
     if (!current || submitting) return
     setSubmitting(true)
     try {
@@ -103,6 +103,7 @@ export function useAnnotation() {
         category_id: categoryId,
         visual_format_id: visualFormatId,
         strategy,
+        doubtful,
       })
       setSkippedIds(remainingSkippedIds)
       await loadNext(remainingSkippedIds)

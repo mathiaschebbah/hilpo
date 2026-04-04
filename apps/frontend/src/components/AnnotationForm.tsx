@@ -11,7 +11,7 @@ type Props = {
   data: PostData
   categories: Lookup[]
   visualFormats: TaxonomyItem[]
-  onSubmit: (categoryId: number, visualFormatId: number, strategy: 'Organic' | 'Brand Content') => void
+  onSubmit: (categoryId: number, visualFormatId: number, strategy: 'Organic' | 'Brand Content', doubtful?: boolean) => void
   onSkip: () => void
   onFormatUpdated?: (updated: TaxonomyItem) => void
 }
@@ -123,14 +123,15 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
 
   const canSubmit = categoryId !== null && visualFormatId !== null && strategy !== null
 
-  const handleSubmit = useCallback(() => {
-    if (canSubmit) onSubmit(categoryId!, visualFormatId!, strategy!)
+  const handleSubmit = useCallback((doubtful = false) => {
+    if (canSubmit) onSubmit(categoryId!, visualFormatId!, strategy!, doubtful)
   }, [canSubmit, categoryId, visualFormatId, strategy, onSubmit])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === 'Enter' && canSubmit) { e.preventDefault(); handleSubmit() }
+      if (e.key === 'Enter' && canSubmit) { e.preventDefault(); handleSubmit(false) }
+      if (e.key === 'd' && canSubmit) { e.preventDefault(); handleSubmit(true) }
       if (e.key === 'Escape') { e.preventDefault(); onSkip() }
       if (e.key === '1') setStrategy('Organic')
       if (e.key === '2') setStrategy('Brand Content')
@@ -258,12 +259,20 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
 
       {/* Actions */}
       <div className="px-4 py-3 border-t border-neutral-100 flex gap-2">
-        <Button variant="ghost" onClick={onSkip} className="flex-1 h-10 text-sm text-neutral-500">
-          Skip
-          <kbd className="ml-1.5 text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">esc</kbd>
+        <Button variant="ghost" onClick={onSkip} className="h-10 text-sm text-neutral-500 px-3">
+          <kbd className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">esc</kbd>
         </Button>
         <Button
-          onClick={handleSubmit}
+          variant="outline"
+          onClick={() => handleSubmit(true)}
+          disabled={!canSubmit}
+          className="flex-1 h-10 text-sm border-amber-300 text-amber-600 hover:bg-amber-50"
+        >
+          Pas sur
+          <kbd className="ml-1.5 text-[10px] text-amber-400 bg-amber-50 px-1.5 py-0.5 rounded">d</kbd>
+        </Button>
+        <Button
+          onClick={() => handleSubmit(false)}
           disabled={!canSubmit}
           className="flex-1 h-10 text-sm bg-neutral-900 hover:bg-neutral-800"
         >
