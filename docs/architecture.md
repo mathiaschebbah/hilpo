@@ -19,8 +19,8 @@ Post → Router → détecte le type (FEED/REELS/STORY)
 1. **Router** : routage **déterministe** basé sur `media_product_type` (métadonnée structurée Instagram, pas de LLM). Chaque post est dispatché vers le scope correspondant (FEED/REELS/STORY), ce qui filtre l'espace des labels.
 2. **Agent catégorie** : classifie parmi les 15 catégories éditoriales
 3. **Agent visual_format** : classifie parmi le sous-ensemble de formats visuels **scopé par type** :
-   - FEED → `post_*` (42 formats)
-   - REELS → `reel_*` (10 formats)
+   - FEED → `post_*` (43 formats)
+   - REELS → `reel_*` (13 formats)
    - STORY → `story_*` (7 formats)
 4. **Agent stratégie** : détermine Organic vs Brand Content
 
@@ -30,8 +30,8 @@ Le routage déterministe réduit drastiquement l'espace de classification pour `
 
 | Scope | Formats possibles | Réduction |
 |-------|------------------|-----------|
-| FEED | 42 formats `post_*` | — |
-| REELS | 10 formats `reel_*` | ÷4 |
+| FEED | 43 formats `post_*` | — |
+| REELS | 13 formats `reel_*` | ÷3 |
 | STORY | 7 formats `story_*` | ÷6 |
 
 Chaque prompt scopé `(I_t^(k,m), Δ^m)` ne contient que les descriptions des formats pertinents pour le type `m`. Le contexte fourni à l'agent inclut : `media_product_type`, `media_type` (IMAGE/CAROUSEL_ALBUM/VIDEO), nombre de slides, et la caption.

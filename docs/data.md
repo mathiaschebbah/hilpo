@@ -30,9 +30,9 @@ L'interface d'annotation pré-remplira les catégories v0 — l'humain confirme 
 
 ## Axes de classification
 
-- **Format visuel** : 59 classes, scopées par `media_product_type` :
-  - `post_*` : 42 formats (FEED)
-  - `reel_*` : 10 formats (REELS)
+- **Format visuel** : 63 classes, scopées par `media_product_type` :
+  - `post_*` : 43 formats (FEED)
+  - `reel_*` : 13 formats (REELS)
   - `story_*` : 7 formats (STORY)
 - **Catégorie éditoriale** : 15 classes (mode, musique, sport, cinéma, société, art_culture, photographie, people, architecture_design, technologie, voyages, lifestyle, business, histoire, gastronomie)
 - **Stratégie** : 2 classes (Organic, Brand Content)
