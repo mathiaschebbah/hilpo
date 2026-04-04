@@ -17,6 +17,10 @@ Nous proposons HILPO, une méthode d'optimisation itérative de prompts par bouc
 
 L'hypothèse est que cette boucle d'optimisation permet d'atteindre une performance de classification satisfaisante sans recourir au fine-tuning, avec un volume d'annotations réduit et un artefact interprétable : le prompt optimisé.
 
+## Collaboration Agent-Humain
+
+Ce projet est également une expérimentation de collaboration entre un agent IA (Claude Code) et un humain pour un travail de recherche. L'intégralité du développement — de la conception architecturale à l'implémentation — est réalisée en binôme agent-humain, avec des mécanismes d'interaction structurés (hooks, validations humaines, versionnement de la documentation). La progression est traçable dans l'historique git.
+
 ## Licence
 
 Ce dépôt est publié à des fins académiques.

@@ -1,6 +1,11 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **1.1** — 2026-04-04
+> Version **1.2** — 2026-04-04
+
+## Double dimension du projet
+
+1. **Recherche HILPO** : peut-on classifier des données multimodales sans gros dataset, en optimisant itérativement un prompt via une boucle humain-dans-la-boucle ?
+2. **Collaboration Agent-Humain** : le projet lui-même est construit via une collaboration structurée entre Claude Code et l'humain. Les hooks (validation CLAUDE.md, AskUserQuestion) incarnent le paradigme humain-dans-la-boucle au niveau du développement. La progression est traçable dans l'historique git.
 
 ## Index
 
@@ -22,5 +27,6 @@
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 1.2 | 2026-04-04 | Double dimension du projet : recherche HILPO + collaboration Agent-Humain |
 | 1.1 | 2026-04-04 | Ajout README, conventions (AskUserQuestion + accents FR), repo GitHub open-source |
 | 1.0 | 2026-04-04 | Création initiale — structure du projet posée à partir du document HILPO |
