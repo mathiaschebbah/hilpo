@@ -9,6 +9,7 @@ type GridItem = {
   shortcode: string | null
   media_type: string
   media_product_type: string
+  split: string | null
   thumbnail_url: string | null
   category: string | null
   visual_format: string | null
@@ -23,12 +24,17 @@ type Lookup = { id: number; name: string }
 
 const PAGE_SIZE = 20
 
-export function PostGrid() {
+type Props = {
+  onOpenPost?: (igMediaId: string) => void
+}
+
+export function PostGrid({ onOpenPost }: Props) {
   const [items, setItems] = useState<GridItem[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('')
+  const [splitFilter, setSplitFilter] = useState<string>('')
   const [categories, setCategories] = useState<Lookup[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -43,12 +49,13 @@ export function PostGrid() {
       limit: PAGE_SIZE,
       status: statusFilter || undefined,
       category: categoryFilter || undefined,
+      split: splitFilter || undefined,
     }).then(data => {
       setItems(data.items)
       setTotal(data.total)
       setLoading(false)
     })
-  }, [offset, statusFilter, categoryFilter])
+  }, [offset, statusFilter, categoryFilter, splitFilter])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
@@ -88,6 +95,21 @@ export function PostGrid() {
           </SelectContent>
         </Select>
 
+        <Select value={splitFilter} onValueChange={v => {
+          const next = v ?? ''
+          setSplitFilter(next === 'all' ? '' : next)
+          setOffset(0)
+        }}>
+          <SelectTrigger className="w-28 h-8 text-xs">
+            {splitFilter === 'test' ? 'Test' : splitFilter === 'dev' ? 'Dev' : 'Tous splits'}
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous splits</SelectItem>
+            <SelectItem value="test">Test</SelectItem>
+            <SelectItem value="dev">Dev</SelectItem>
+          </SelectContent>
+        </Select>
+
         <span className="ml-auto text-xs font-mono text-neutral-400 tabular-nums">
           {total} posts
         </span>
@@ -105,7 +127,8 @@ export function PostGrid() {
           {items.map(item => (
             <div
               key={item.ig_media_id}
-              className="group relative rounded-lg overflow-hidden bg-neutral-100"
+              onClick={() => item.split === 'test' && onOpenPost?.(item.ig_media_id)}
+              className={`group relative rounded-lg overflow-hidden bg-neutral-100 ${item.split === 'test' && onOpenPost ? 'cursor-pointer hover:ring-2 hover:ring-amber-300 transition-shadow' : ''}`}
             >
               {/* Image */}
               <div className="aspect-[4/5] relative">
@@ -134,11 +157,20 @@ export function PostGrid() {
                   </div>
                 )}
 
-                {/* Badge type */}
-                <div className="absolute bottom-1.5 left-1.5">
+                {/* Badges type + split */}
+                <div className="absolute bottom-1.5 left-1.5 flex gap-1">
                   <span className="text-[9px] font-mono uppercase bg-black/60 text-white px-1.5 py-0.5 rounded-full">
                     {item.media_product_type}
                   </span>
+                  {item.split && (
+                    <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${
+                      item.split === 'test'
+                        ? 'bg-amber-500/80 text-white'
+                        : 'bg-blue-500/60 text-white'
+                    }`}>
+                      {item.split}
+                    </span>
+                  )}
                 </div>
               </div>
 

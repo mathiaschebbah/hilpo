@@ -23,6 +23,7 @@ class PostRepository:
                 SELECT
                     p.ig_media_id, p.shortcode, p.caption, p.timestamp,
                     p.media_type, p.media_product_type,
+                    sp.split,
                     h.category_id, c.name AS heuristic_category,
                     h.visual_format_id, vf.name AS heuristic_visual_format,
                     h.strategy AS heuristic_strategy,
@@ -35,10 +36,38 @@ class PostRepository:
                 LEFT JOIN annotations a
                     ON a.ig_media_id = p.ig_media_id AND a.annotator = :annotator
                 WHERE a.id IS NULL {exclude_clause}
-                ORDER BY sp.presentation_order
+                ORDER BY sp.split DESC, sp.presentation_order
                 LIMIT 1
             """),
             params,
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def find_post_by_id(self, ig_media_id: int, annotator: str) -> dict | None:
+        result = await self.db.execute(
+            text("""
+                SELECT
+                    p.ig_media_id, p.shortcode, p.caption, p.timestamp,
+                    p.media_type, p.media_product_type,
+                    sp.split,
+                    h.category_id, c.name AS heuristic_category,
+                    h.visual_format_id, vf.name AS heuristic_visual_format,
+                    h.strategy AS heuristic_strategy,
+                    h.subcategory AS heuristic_subcategory,
+                    a.category_id AS ann_category_id,
+                    a.visual_format_id AS ann_visual_format_id,
+                    a.strategy AS ann_strategy
+                FROM sample_posts sp
+                JOIN posts p ON p.ig_media_id = sp.ig_media_id
+                LEFT JOIN heuristic_labels h ON h.ig_media_id = p.ig_media_id
+                LEFT JOIN categories c ON c.id = h.category_id
+                LEFT JOIN visual_formats vf ON vf.id = h.visual_format_id
+                LEFT JOIN annotations a
+                    ON a.ig_media_id = p.ig_media_id AND a.annotator = :annotator
+                WHERE p.ig_media_id = :ig_media_id
+            """),
+            {"ig_media_id": ig_media_id, "annotator": annotator},
         )
         row = result.mappings().first()
         return dict(row) if row else None
@@ -73,6 +102,7 @@ class PostRepository:
     async def find_all_sample_posts(
         self, annotator: str, offset: int = 0, limit: int = 50,
         status: str | None = None, category: str | None = None,
+        split: str | None = None,
     ) -> tuple[list[dict], int]:
         where_clauses = []
         params: dict = {"annotator": annotator, "offset": offset, "limit": limit}
@@ -86,12 +116,17 @@ class PostRepository:
             where_clauses.append("c.name = :category")
             params["category"] = category
 
+        if split:
+            where_clauses.append("sp.split::text = :split")
+            params["split"] = split
+
         where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 
         result = await self.db.execute(
             text(f"""
                 SELECT
                     p.ig_media_id, p.shortcode, p.media_type, p.media_product_type,
+                    sp.split,
                     c.name AS category, vf.name AS visual_format,
                     h.strategy,
                     ac.name AS annotation_category,
@@ -112,7 +147,7 @@ class PostRepository:
                 LEFT JOIN categories ac ON ac.id = a.category_id
                 LEFT JOIN visual_formats avf ON avf.id = a.visual_format_id
                 WHERE 1=1 {where_sql}
-                ORDER BY a.id IS NOT NULL DESC, p.timestamp DESC
+                ORDER BY sp.split DESC, a.id IS NOT NULL DESC, p.timestamp DESC
                 OFFSET :offset LIMIT :limit
             """),
             params,

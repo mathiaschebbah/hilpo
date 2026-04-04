@@ -109,9 +109,16 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
   const [strategy, setStrategy] = useState<'Organic' | 'Brand Content' | null>(null)
 
   useEffect(() => {
-    setCategoryId(heuristic.category_id)
-    setVisualFormatId(heuristic.visual_format_id)
-    setStrategy(heuristic.heuristic_strategy as 'Organic' | 'Brand Content' | null)
+    const ann = data.annotation
+    if (ann?.category_id != null) {
+      setCategoryId(ann.category_id)
+      setVisualFormatId(ann.visual_format_id)
+      setStrategy(ann.strategy as 'Organic' | 'Brand Content' | null)
+    } else {
+      setCategoryId(heuristic.category_id)
+      setVisualFormatId(heuristic.visual_format_id)
+      setStrategy(heuristic.heuristic_strategy as 'Organic' | 'Brand Content' | null)
+    }
   }, [data.post.ig_media_id])
 
   const canSubmit = categoryId !== null && visualFormatId !== null && strategy !== null

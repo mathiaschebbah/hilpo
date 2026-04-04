@@ -11,7 +11,7 @@ type View = 'annotate' | 'grid' | 'taxonomy'
 
 function App() {
   const [view, setView] = useState<View>('annotate')
-  const { current, done, progress, categories, visualFormats, loading, submit, skip, updateVisualFormat } = useAnnotation()
+  const { current, done, progress, categories, visualFormats, loading, submit, skip, loadPost, updateVisualFormat } = useAnnotation()
 
   const pct = progress.total > 0 ? (progress.annotated / progress.total) * 100 : 0
 
@@ -70,7 +70,7 @@ function App() {
 
       {view === 'grid' && (
         <main className="max-w-6xl mx-auto p-6">
-          <PostGrid />
+          <PostGrid onOpenPost={(id) => { loadPost(id); setView('annotate') }} />
         </main>
       )}
 
@@ -109,6 +109,15 @@ function App() {
                     <Badge variant="outline" className="text-[11px]">
                       {current.post.media_type}
                     </Badge>
+                    {current.post.split && (
+                      <Badge className={`text-[11px] text-white ${
+                        current.post.split === 'test'
+                          ? 'bg-amber-500 hover:bg-amber-600'
+                          : 'bg-blue-500 hover:bg-blue-600'
+                      }`}>
+                        {current.post.split}
+                      </Badge>
+                    )}
                     {current.media.length > 1 && (
                       <span className="text-xs text-neutral-400">
                         {current.media.length} slides

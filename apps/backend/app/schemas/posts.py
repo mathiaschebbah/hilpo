@@ -27,12 +27,20 @@ class PostOut(BaseModel):
     timestamp: datetime
     media_type: str
     media_product_type: str
+    split: str | None = None
+
+
+class AnnotationValues(BaseModel):
+    category_id: int | None = None
+    visual_format_id: int | None = None
+    strategy: str | None = None
 
 
 class NextPostOut(BaseModel):
     post: PostOut
     heuristic: HeuristicLabels
     media: list[MediaOut]
+    annotation: AnnotationValues | None = None
 
 
 class ProgressOut(BaseModel):
@@ -50,6 +58,7 @@ class PostGridItem(BaseModel):
     shortcode: str | None = None
     media_type: str
     media_product_type: str
+    split: str | None = None
     thumbnail_url: str | None = None
     category: str | None = None
     visual_format: str | None = None

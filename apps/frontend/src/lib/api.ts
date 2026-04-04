@@ -20,6 +20,7 @@ type NextPostResponse = {
     timestamp: string
     media_type: string
     media_product_type: string
+    split: string | null
   }
   heuristic: {
     category_id: number | null
@@ -37,6 +38,11 @@ type NextPostResponse = {
     width: number | null
     height: number | null
   }>
+  annotation: {
+    category_id: number | null
+    visual_format_id: number | null
+    strategy: string | null
+  } | null
 }
 
 type PostGridResponse = {
@@ -45,6 +51,7 @@ type PostGridResponse = {
     shortcode: string | null
     media_type: string
     media_product_type: string
+    split: string | null
     thumbnail_url: string | null
     category: string | null
     visual_format: string | null
@@ -102,6 +109,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+export async function fetchPost(igMediaId: string, annotator = 'mathias'): Promise<NextPostResponse> {
+  return requestJson<NextPostResponse>(`/posts/${igMediaId}?annotator=${annotator}`)
+}
+
 export async function fetchNextPost(annotator = 'mathias', excludeIds: string[] = []): Promise<NextPostResponse> {
   const qs = new URLSearchParams({ annotator })
   excludeIds.forEach(excludeId => qs.append('exclude', excludeId))
@@ -125,6 +136,7 @@ export async function fetchPostGrid(params: {
   limit?: number
   status?: string
   category?: string
+  split?: string
   annotator?: string
 } = {}): Promise<PostGridResponse> {
   const qs = new URLSearchParams()
@@ -132,6 +144,7 @@ export async function fetchPostGrid(params: {
   if (params.limit) qs.set('limit', String(params.limit))
   if (params.status) qs.set('status', params.status)
   if (params.category) qs.set('category', params.category)
+  if (params.split) qs.set('split', params.split)
   qs.set('annotator', params.annotator ?? 'mathias')
   return requestJson<PostGridResponse>(`/posts/?${qs}`)
 }

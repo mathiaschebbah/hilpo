@@ -20,9 +20,10 @@ async def list_posts(
     limit: int = 50,
     status: str | None = None,
     category: str | None = None,
+    split: str | None = None,
     service: PostService = Depends(get_service),
 ):
-    return await service.get_grid(annotator, offset, limit, status, category)
+    return await service.get_grid(annotator, offset, limit, status, category, split)
 
 
 @router.get("/next", response_model=NextPostOut)
@@ -50,3 +51,12 @@ async def get_categories(service: PostService = Depends(get_service)):
 @router.get("/visual-formats", response_model=list[LookupOut])
 async def get_visual_formats(service: PostService = Depends(get_service)):
     return await service.get_visual_formats()
+
+
+@router.get("/{ig_media_id}", response_model=NextPostOut)
+async def get_post(
+    ig_media_id: int,
+    annotator: str = "mathias",
+    service: PostService = Depends(get_service),
+):
+    return await service.get_post_by_id(ig_media_id, annotator)

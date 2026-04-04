@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchNextPost, fetchProgress, fetchCategories, fetchTaxonomy, submitAnnotation, type TaxonomyItem } from '@/lib/api'
+import { fetchNextPost, fetchPost, fetchProgress, fetchCategories, fetchTaxonomy, submitAnnotation, type TaxonomyItem } from '@/lib/api'
 
 type Lookup = { id: number; name: string }
 
@@ -30,10 +30,17 @@ type Media = {
   height: number | null
 }
 
+type Annotation = {
+  category_id: number | null
+  visual_format_id: number | null
+  strategy: string | null
+}
+
 export type PostData = {
-  post: Post
+  post: Post & { split?: string | null }
   heuristic: Heuristic
   media: Media[]
+  annotation?: Annotation | null
 }
 
 export function useAnnotation() {
@@ -111,9 +118,21 @@ export function useAnnotation() {
     await loadNext(nextSkippedIds)
   }, [current, skippedIds, loadNext])
 
+  const loadPost = useCallback(async (igMediaId: string) => {
+    setLoading(true)
+    try {
+      const [data, prog] = await Promise.all([fetchPost(igMediaId), fetchProgress()])
+      setDone(false)
+      setCurrent(data)
+      setProgress(prog)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   const updateVisualFormat = useCallback((updated: TaxonomyItem) => {
     setVisualFormats(prev => prev.map(vf => vf.id === updated.id ? updated : vf))
   }, [])
 
-  return { current, done, progress, categories, visualFormats, loading: loading || !ready, submitting, submit, skip, updateVisualFormat }
+  return { current, done, progress, categories, visualFormats, loading: loading || !ready, submitting, submit, skip, loadPost, updateVisualFormat }
 }
