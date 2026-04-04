@@ -1,7 +1,7 @@
 # Projet
 
 Mémoire de fin d'études de Mathias Chebbah (Master 1 MIAGE, Université Paris Dauphine), en alternance chez Views (média gen-z).
-Systeme d'annotation agentique pour classifier des posts Instagram via une boucle humain-dans-la-boucle qui optimise iterativement le prompt du classificateur.
+Système d'annotation agentique pour classifier des posts Instagram via une boucle humain-dans-la-boucle qui optimise itérativement le prompt du classificateur. Le système remplace une heuristique de classification v0 (imprécise) par une pipeline performante, applicable en production chez Views.
 
 ## Problematique
 
