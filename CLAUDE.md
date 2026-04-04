@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **2.4** — 2026-04-04
+> Version **2.5** — 2026-04-04
 
 ## Double dimension du projet
 
@@ -9,15 +9,16 @@
 
 ## Index
 
-- [Projet](docs/project.md) — contexte, problematique, hypothese, contraintes
+- [Projet](docs/project.md) — hypotheses falsifiables, positionnement, claim vise
+- [Etat de l'art](docs/related_work.md) — APE, DSPy, iPrOp, positionnement HILPO
 - [Stack](docs/stack.md) — technologies et choix techniques
-- [Architecture](docs/architecture.md) — agents, pipeline, flux de donnees
+- [Architecture](docs/architecture.md) — agents, pipeline, formalisation mathematique
 - [Schema BDD](docs/schema.md) — tables, relations, contraintes
 - [Donnees](docs/data.md) — structure des CSV, axes de classification, taxonomie
 - [Phases](docs/phases.md) — phases de dev et avancement
-- [Evaluation](docs/evaluation.md) — protocole experimental, metriques, baselines, ablations
+- [Evaluation](docs/evaluation.md) — protocole, metriques, tiers de priorite, checklist recevabilite
 - [Conventions](docs/conventions.md) — règles de collaboration et standards
-- [Planning](docs/planning.md) — calendrier jour par jour, 5-18 avril 2026
+- [Planning](docs/planning.md) — calendrier jour par jour avec creneaux, 5-18 avril 2026
 
 ## Monorepo
 
@@ -43,6 +44,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 2.5 | 2026-04-04 | Cadrage recherche : hypothèses H1/H2, état de l'art, formalisation, tiers éval, planning révisé |
 | 2.4 | 2026-04-04 | Guard MediaViewer undefined, test E2E validé (22 annotations) |
 | 2.3 | 2026-04-04 | Phase 1 terminée — BIGINT string, proxy Vite, skip multi-exclude, vidéo player |
 | 2.2 | 2026-04-04 | Infra expérimentale : splits dev/test, ordre déterministe, trigger match, simulation_runs |

@@ -43,3 +43,44 @@ Chaque agent a un prompt par type de post. Ex : `agent_categorie × REELS` a son
 3. Il propose un nouveau prompt → stocké en draft
 4. Évaluation passive sur les posts suivants
 5. Si accuracy ≥ ancienne → promotion en actif, sinon → rejeté
+
+## Formalisation mathématique
+
+### Notation
+
+- **D** = {(x_i, m_i)} pour i=1..N : ensemble de posts, où x_i = (image_i, caption_i) est l'entrée multimodale et m_i ∈ {FEED, REELS, STORY} le type
+- **Y_k** : espace des labels pour l'axe k ∈ {catégorie, visual_format, stratégie}
+- **p_t^(k,m)** : prompt actif à l'itération t pour l'agent k scopé au type m
+- **f_θ(x, p)** : modèle de vision-langage (paramètres θ fixés), prompt p
+- **h(x_i) ∈ Y_k** : annotation humaine pour le post x_i
+
+### Algorithme
+
+```
+Entrée : D, B (batch size = 30), f_θ, p_0 (prompt initial)
+Sortie : p_T (prompt optimisé), annotations {h(x_i)}
+
+t ← 0
+E_t ← ∅                          // buffer d'erreurs
+
+Pour chaque post x_i présenté à l'humain :
+    1. Collecter h(x_i)           // annotation humaine
+    2. ŷ_i ← f_θ(x_i, p_t)      // prédiction parallèle
+    3. Si h(x_i) ≠ ŷ_i :
+         E_t ← E_t ∪ {(x_i, h(x_i), ŷ_i)}
+    4. Si |E_t| ≥ B :
+         p_{t+1} ← R(p_t, E_t)   // rewriter invoqué
+         Si acc(p_{t+1}) ≥ acc(p_t) sur fenêtre de validation :
+             t ← t + 1           // promotion
+         Sinon :
+             rejeter p_{t+1}     // rollback
+         E_t ← ∅                 // reset buffer
+
+Retourner p_t
+```
+
+### Propriétés à analyser
+
+- **Convergence** : le prompt se stabilise-t-il ? Mesurable via la courbe accuracy vs nombre d'annotations — on s'attend à un plateau
+- **Monotonicité** : le mécanisme de rollback garantit que la performance ne décroît pas (en théorie). À vérifier empiriquement via l'ablation A5 (sans rollback)
+- **Efficacité en annotations** : combien d'annotations pour atteindre le plateau ? C'est le chiffre clé pour valider H1 (≤ 200 par axe)

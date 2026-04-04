@@ -1,102 +1,116 @@
 # Planning — 4 au 18 avril 2026
 
 > Deadline : **samedi 18 avril 2026**
+> Principe : **les annotations passent toujours avant le code**
 
-## Semaine 1 — Infrastructure + annotation + classificateur
+## Semaine 1 — Annotations + Phases 2-3
 
-### Sam 4 avril — Phase A (infrastructure)
+### Sam 4 avril — Infrastructure ✅
 - ~~Structure monorepo~~ ✅
-- ~~Schéma BDD (001 initial + 002 experiment infra)~~ ✅
-- ~~Backend FastAPI architecture en couches~~ ✅
-- ~~Frontend React swipe + grille dataset~~ ✅
+- ~~Schéma BDD~~ ✅
+- ~~Backend FastAPI~~ ✅
+- ~~Frontend React swipe~~ ✅
 - ~~GCS URLs signées~~ ✅
-- ~~Import CSV + échantillonnage stratifié Views~~ ✅
-- ~~Splits dev/test (1563/437) + presentation_order~~ ✅
-- ~~Trigger auto-match + simulation_runs~~ ✅
-- ~~Hook PreToolUse + skill /setup~~ ✅
-- Test end-to-end : annoter quelques posts, vérifier en BDD
-- Fix bugs bloquants
+- ~~Import CSV + splits~~ ✅
+- ~~Test E2E~~ ✅
 
-### Dim 5 — Test E2E + annotation sprint 1
-- Finaliser test end-to-end
-- Objectif : **400 posts** annotés
-- Sessions de 45min avec pauses
-- Estimer le temps moyen par post
+### Dim 5 avril — Annotation sprint 1
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Annoter 200 posts |
+| Après-midi (3h) | Annoter 200 posts |
+| Soir (2h) | Implémenter Phase 2 (API Qwen, prompt v0, logging) |
 
-### Lun 6 — Annotation sprint 2 + début Phase 2
-- Matin : **400 posts** (cumulé : 800)
-- Après-midi : intégration API Qwen 3.5, prompt v0 statique, logging api_calls
+### Lun 6 — Annotation sprint 2 + Phase 2 live
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Annoter 200 posts |
+| Après-midi (3h) | Annoter 200 posts + Phase 2 live |
+| Soir (2h) | Debug Phase 2 + premier batch de prédictions |
 
-### Mar 7 — Phase 2 live + début rewriter
-- Classificateur actif en parallèle de l'annotation
-- **400 posts** (cumulé : 1200)
-- Après-midi : commencer l'agent rewriter
+### Mar 7 — Annotation sprint 3 + début rewriter
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Annoter 200 posts |
+| Après-midi (3h) | Annoter 200 posts + implémenter rewriter |
+| Soir (2h) | Rewriter : test sur erreurs accumulées |
 
-### Mer 8 — Phase 3 : boucle HILPO
-- Matin : finir rewriter + batching (B=30) + rollback
-- Après-midi : activer la boucle HILPO live
-- **400 posts** (cumulé : 1600)
+### Mer 8 — Annotation sprint 4 + boucle HILPO
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Annoter 200 posts |
+| Après-midi (3h) | Annoter 200 posts + boucle HILPO active |
+| Soir (2h) | Vérifier prompt v1 généré, lancer éval |
 
-### Jeu 9 — Finir l'annotation
-- **400 posts** (cumulé : 2000)
-- Re-swipe 50 posts à l'aveugle (kappa intra-annotateur)
-- Collaborateur Views : lancer ses 500 posts (si dispo)
-- Vérifier intégrité des données
+### Jeu 9 — Fin annotation + kappa
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Annoter 200 posts + re-swipe 50 posts (kappa intra) |
+| Après-midi (3h) | Derniers 200 posts (cumulé : 2000) |
+| Soir (2h) | Éval prompt v0 vs vN sur split test (400 posts) |
 
-### Ven 10 — Évaluation finale live
-- 400 posts test × prompt v0 (baseline) + prompt vN (optimisé)
-- Logger tous les appels API (800 appels éval)
-- Première lecture des résultats
+### Ven 10 — Analyse des résultats
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Calculer toutes les métriques (F1, kappa, McNemar) |
+| Après-midi (3h) | Courbe de convergence + tableaux |
+| Soir (2h) | Commencer related work (2h d'écriture) |
 
-## Semaine 2 — Simulations + baselines + rédaction
+## Semaine 2 — Simulations + rédaction
 
-### Sam 11 — Script de simulation
-- Script de rejeu automatique (annotations fixées, seed variable)
-- Tester sur 1 split
+### Sam 11 — Simulations
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Script de simulation 5 splits × ablations |
+| Après-midi (3h) | Suite simulations |
+| Soir (2h) | Baselines B2 (few-shot) |
 
-### Dim 12 — Simulations + A6
-- 5 splits × 6 ablations = **30 runs** automatiques
-- A0 : prompt statique, A1-A4 : batch 1/10/30/50, A5 : sans rollback
-- A6 (rewrite humain) : ~2-3h de réécriture manuelle sur 1 split
+### Dim 12 — Baselines + ablations
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Baselines B4-B5 (CLIP) + ablation A5 |
+| Après-midi (3h) | Finaliser métriques + McNemar |
+| Soir (2h) | Figures matplotlib/seaborn |
 
-### Lun 13 — Baselines
-- B0 : zero-shot prompt v0 (déjà fait, extraire résultats)
-- B1 : zero-shot CLIP
-- B2-B3 : few-shot in-context (5 et 10 exemples/classe)
-- B4 : CLIP embeddings + Logistic Regression (5 splits)
-- B5 : CLIP embeddings + SVM (5 splits)
-- Kappa inter-annotateur (si collaborateur Views a terminé)
+### Lun 13 — Rédaction : cadrage
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Introduction + problématique + related work |
+| Après-midi (3h) | Méthode + formalisation |
+| Soir (2h) | Relecture méthode |
 
-### Mar 14 — Métriques et figures
-- Métriques sur 5 splits (moyenne ± std)
-- Tests de McNemar + Bonferroni
-- Figures : convergence, courbes d'apprentissage, ablations, matrices confusion, coûts
-- Tableaux : comparaison méthodes, ablations, p-values, coûts, kappa
+### Mar 14 — Rédaction : résultats
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Résultats (figures + tableaux) |
+| Après-midi (3h) | Discussion |
+| Soir (2h) | Relecture résultats |
 
-### Mer 15 — Rédaction partie 1
-- Introduction, problématique, positionnement
-- Méthode (formalisation, algorithme, architecture)
-- Protocole expérimental
+### Mer 15 — Rédaction : discussion + abstract
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Discussion + limites + perspectives |
+| Après-midi (3h) | Abstract + conclusion |
+| Soir (2h) | Relecture complète |
 
-### Jeu 16 — Rédaction partie 2
-- Résultats (figures + tableaux)
-- Discussion, analyse qualitative du prompt, limites
-- Perspectives
+### Jeu 16 — Polish
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Bibliographie + polish |
+| Après-midi (3h) | Relecture finale |
+| Soir (2h) | Buffer |
 
-### Ven 17 — Relecture + polish
-- Relecture complète
-- Abstract / résumé
-- Bibliographie vérifiée
+### Ven 17 — Derniers ajustements
+- Corrections finales
+- Vérification code reproductible
 
-### Sam 18 — Finalisation + rendu
-- Derniers ajustements
-- **Rendu**
+### Sam 18 — **Rendu**
 
 ## Annotation par jour
 
-| Jour | Posts | Cumulé | Phase |
-|------|-------|--------|-------|
-| Dim 5 | 400 | 400 | Phase 1 |
+| Jour | Posts | Cumulé | Phase active |
+|------|-------|--------|--------------|
+| Dim 5 | 400 | 400 | Phase 1 seule |
 | Lun 6 | 400 | 800 | Phase 1 → 2 |
 | Mar 7 | 400 | 1200 | Phase 2 |
 | Mer 8 | 400 | 1600 | Phase 2 → 3 |
