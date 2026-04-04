@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **1.5** — 2026-04-04
+> Version **1.6** — 2026-04-04
 
 ## Double dimension du projet
 
@@ -42,6 +42,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 1.6 | 2026-04-04 | Schéma BDD multi-agents × scope, architecture pipeline 4 agents |
 | 1.5 | 2026-04-04 | Hook natif Claude Code remplace hookify, conventions mises à jour |
 | 1.4 | 2026-04-04 | Analyse données complète, 44 formats visuels, CSV = heuristique v0 à remplacer |
 | 1.3 | 2026-04-04 | Structure monorepo (hilpo/, apps/, scripts/), auteur M1 MIAGE Dauphine |
