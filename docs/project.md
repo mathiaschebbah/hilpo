@@ -15,5 +15,4 @@ L'optimisation itérative d'un prompt par confrontation avec un annotateur humai
 
 - **Deadline** : 18 avril 2026
 - **Livrable** : rapport de mémoire + code fonctionnel
-- **Budget API** : financé par Views
 - **État au 4 avril 2026** : infrastructure complète (backend FastAPI, frontend React, PostgreSQL, GCS, splits, échantillon 2000 posts). Prêt à annoter.
