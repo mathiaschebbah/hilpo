@@ -1,0 +1,26 @@
+# Donnees (non versionnees, accessibles localement)
+/data/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node / React
+node_modules/
+dist/
+build/
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code (fichiers locaux)
+.claude/*.local.*
