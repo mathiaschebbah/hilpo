@@ -50,33 +50,35 @@ Chaque agent a un prompt par type de post. Ex : `agent_categorie × REELS` a son
 
 - **D** = {(x_i, m_i)} pour i=1..N : ensemble de posts, où x_i = (image_i, caption_i) est l'entrée multimodale et m_i ∈ {FEED, REELS, STORY} le type
 - **Y_k** : espace des labels pour l'axe k ∈ {catégorie, visual_format, stratégie}
-- **p_t^(k,m)** : prompt actif à l'itération t pour l'agent k scopé au type m
+- **Δ** : descriptions taxonomiques (rédigées par l'humain, fixes). Définitions métier des labels injectées telles quelles dans le prompt.
+- **I_t^(k,m)** : instructions actives à l'itération t pour l'agent k scopé au type m. C'est la partie optimisée par HILPO.
+- **p_t = (I_t, Δ)** : prompt complet = instructions + descriptions. Seul I_t change au fil des itérations.
 - **f_θ(x, p)** : modèle de vision-langage (paramètres θ fixés), prompt p
 - **h(x_i) ∈ Y_k** : annotation humaine pour le post x_i
 
 ### Algorithme
 
 ```
-Entrée : D, B (batch size = 30), f_θ, p_0 (prompt initial)
-Sortie : p_T (prompt optimisé), annotations {h(x_i)}
+Entrée : D, B (batch size = 30), f_θ, I_0 (instructions initiales), Δ (descriptions fixes)
+Sortie : I_T (instructions optimisées), annotations {h(x_i)}
 
 t ← 0
-E_t ← ∅                          // buffer d'erreurs
+E_t ← ∅                                  // buffer d'erreurs
 
 Pour chaque post x_i présenté à l'humain :
-    1. Collecter h(x_i)           // annotation humaine
-    2. ŷ_i ← f_θ(x_i, p_t)      // prédiction parallèle
+    1. Collecter h(x_i)                   // annotation humaine
+    2. ŷ_i ← f_θ(x_i, (I_t, Δ))         // prédiction avec prompt complet
     3. Si h(x_i) ≠ ŷ_i :
          E_t ← E_t ∪ {(x_i, h(x_i), ŷ_i)}
     4. Si |E_t| ≥ B :
-         p_{t+1} ← R(p_t, E_t)   // rewriter invoqué
-         Si acc(p_{t+1}) ≥ acc(p_t) sur fenêtre de validation :
-             t ← t + 1           // promotion
+         I_{t+1} ← R(I_t, E_t, Δ)       // rewriter : voit Δ, ne modifie que I
+         Si acc((I_{t+1}, Δ)) ≥ acc((I_t, Δ)) sur fenêtre de validation :
+             t ← t + 1                   // promotion
          Sinon :
-             rejeter p_{t+1}     // rollback
-         E_t ← ∅                 // reset buffer
+             rejeter I_{t+1}             // rollback
+         E_t ← ∅                         // reset buffer
 
-Retourner p_t
+Retourner I_t
 ```
 
 ### Propriétés à analyser

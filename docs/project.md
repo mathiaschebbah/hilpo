@@ -22,7 +22,7 @@ HILPO se distingue des travaux existants sur **trois axes simultanés** :
 
 2. **Domaine multimodal à taxonomie subjective.** Les 44 formats visuels et 15 catégories éditoriales de Views sont des classes définies par un média, pas par un benchmark académique. La taxonomie est instable, culturellement située — un terrain où l'oracle humain est plus précieux que les métriques automatiques.
 
-3. **Le prompt est l'artefact final.** Contrairement au fine-tuning, HILPO produit un artefact lisible, auditable et transférable. Argument pratique fort pour l'industrie.
+3. **Le prompt est l'artefact final, avec séparation explicite.** Le prompt HILPO est composé de deux blocs : les descriptions taxonomiques (rédigées par l'expert métier, fixes) et les instructions de classification (optimisées par la boucle). Contrairement au fine-tuning, l'artefact est lisible, auditable et transférable. On peut analyser précisément ce que la boucle a appris (instructions) vs ce que l'humain savait déjà (descriptions).
 
 ## Claim visé
 
