@@ -20,6 +20,10 @@ app/
 └── exceptions.py  ← handler global + exceptions custom
 ```
 
+## Médias GCS
+
+Les images/vidéos sont stockées sur Google Cloud Storage (bucket privé). Le backend signe les URLs à la volée via V4 Signed URLs (IAM Sign Blob). Configuration via `.env` (gitignored) : `HILPO_GCS_SIGN_URLS`, `HILPO_GCS_SIGNING_SA_EMAIL`. Dev local : `gcloud auth application-default login`.
+
 ## Dépendances backend
 
-FastAPI, SQLAlchemy (async), asyncpg, pydantic-settings, uvicorn, alembic
+FastAPI, SQLAlchemy (async), asyncpg, pydantic-settings, uvicorn, alembic, google-cloud-storage, google-auth

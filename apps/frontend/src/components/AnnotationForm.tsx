@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import type { PostData } from '@/hooks/useAnnotation'
 
 type Lookup = { id: number; name: string }
@@ -30,90 +29,146 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
 
   const canSubmit = categoryId !== null && visualFormatId !== null && strategy !== null
 
+  const handleSubmit = useCallback(() => {
+    if (canSubmit) onSubmit(categoryId!, visualFormatId!, strategy!)
+  }, [canSubmit, categoryId, visualFormatId, strategy, onSubmit])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 'Enter' && canSubmit) { e.preventDefault(); handleSubmit() }
+      if (e.key === 'Escape') { e.preventDefault(); onSkip() }
+      if (e.key === '1') setStrategy('Organic')
+      if (e.key === '2') setStrategy('Brand Content')
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [canSubmit, handleSubmit, onSkip])
+
+  const categoryName = categories.find(c => c.id === categoryId)?.name
+  const formatName = visualFormats.find(vf => vf.id === visualFormatId)?.name
+  const categoryChanged = categoryId !== heuristic.category_id
+  const formatChanged = visualFormatId !== heuristic.visual_format_id
+  const strategyChanged = strategy !== heuristic.heuristic_strategy
+
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
-        <div className="flex gap-2 flex-wrap">
+    <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
+      {/* Heuristique v0 */}
+      <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-100">
+        <p className="text-[11px] font-medium text-neutral-400 mb-2">Heuristique v0</p>
+        <div className="flex gap-1.5 flex-wrap">
           {heuristic.heuristic_category && (
-            <Badge variant="secondary">v0: {heuristic.heuristic_category}</Badge>
+            <Badge variant="secondary" className="text-[11px] bg-neutral-100 text-neutral-600 hover:bg-neutral-100">
+              {heuristic.heuristic_category}
+            </Badge>
           )}
           {heuristic.heuristic_visual_format && (
-            <Badge variant="secondary">v0: {heuristic.heuristic_visual_format}</Badge>
+            <Badge variant="secondary" className="text-[11px] bg-neutral-100 text-neutral-600 hover:bg-neutral-100">
+              {heuristic.heuristic_visual_format}
+            </Badge>
           )}
           {heuristic.heuristic_strategy && (
-            <Badge variant="secondary">v0: {heuristic.heuristic_strategy}</Badge>
+            <Badge variant="secondary" className="text-[11px] bg-neutral-100 text-neutral-600 hover:bg-neutral-100">
+              {heuristic.heuristic_strategy}
+            </Badge>
+          )}
+          {heuristic.heuristic_subcategory && (
+            <Badge variant="outline" className="text-[11px] text-neutral-400 border-neutral-200 hover:bg-transparent">
+              {heuristic.heuristic_subcategory}
+            </Badge>
           )}
         </div>
+      </div>
 
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium mb-1 block">Catégorie</label>
-            <Select
-              value={categoryId?.toString() ?? ''}
-              onValueChange={v => setCategoryId(Number(v))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Choisir une catégorie" />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map(c => (
-                  <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {/* Formulaire */}
+      <div className="p-4 space-y-4">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-neutral-500">Catégorie</label>
+            {categoryChanged && (
+              <span className="text-[11px] text-amber-600">modifié</span>
+            )}
           </div>
-
-          <div>
-            <label className="text-sm font-medium mb-1 block">Format visuel</label>
-            <Select
-              value={visualFormatId?.toString() ?? ''}
-              onValueChange={v => setVisualFormatId(Number(v))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Choisir un format" />
-              </SelectTrigger>
-              <SelectContent>
-                {visualFormats.map(vf => (
-                  <SelectItem key={vf.id} value={vf.id.toString()}>{vf.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium mb-1 block">Stratégie</label>
-            <div className="flex gap-2">
-              <Button
-                variant={strategy === 'Organic' ? 'default' : 'outline'}
-                onClick={() => setStrategy('Organic')}
-                className="flex-1"
-              >
-                Organic
-              </Button>
-              <Button
-                variant={strategy === 'Brand Content' ? 'default' : 'outline'}
-                onClick={() => setStrategy('Brand Content')}
-                className="flex-1"
-              >
-                Brand
-              </Button>
-            </div>
-          </div>
+          <Select value={categoryId?.toString() ?? ''} onValueChange={v => setCategoryId(Number(v))}>
+            <SelectTrigger className="w-full h-9 text-sm">
+              {categoryName ?? <span className="text-neutral-400">Choisir...</span>}
+            </SelectTrigger>
+            <SelectContent>
+              {categories.map(c => (
+                <SelectItem key={c.id} value={c.id.toString()} className="text-sm">{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        <div className="flex gap-2 pt-2">
-          <Button variant="ghost" onClick={onSkip} className="flex-1">
-            Skip
-          </Button>
-          <Button
-            onClick={() => canSubmit && onSubmit(categoryId!, visualFormatId!, strategy!)}
-            disabled={!canSubmit}
-            className="flex-1"
-          >
-            Valider
-          </Button>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-neutral-500">Format visuel</label>
+            {formatChanged && (
+              <span className="text-[11px] text-amber-600">modifié</span>
+            )}
+          </div>
+          <Select value={visualFormatId?.toString() ?? ''} onValueChange={v => setVisualFormatId(Number(v))}>
+            <SelectTrigger className="w-full h-9 text-sm">
+              {formatName ?? <span className="text-neutral-400">Choisir...</span>}
+            </SelectTrigger>
+            <SelectContent>
+              {visualFormats.map(vf => (
+                <SelectItem key={vf.id} value={vf.id.toString()} className="text-sm">{vf.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </CardContent>
-    </Card>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-neutral-500">Stratégie</label>
+            {strategyChanged && (
+              <span className="text-[11px] text-amber-600">modifié</span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-1 p-1 bg-neutral-100 rounded-lg">
+            <button
+              onClick={() => setStrategy('Organic')}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
+                strategy === 'Organic'
+                  ? 'bg-white text-neutral-900 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-700'
+              }`}
+            >
+              Organic
+              <kbd className="ml-1.5 text-[10px] text-neutral-400">1</kbd>
+            </button>
+            <button
+              onClick={() => setStrategy('Brand Content')}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
+                strategy === 'Brand Content'
+                  ? 'bg-white text-neutral-900 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-700'
+              }`}
+            >
+              Brand
+              <kbd className="ml-1.5 text-[10px] text-neutral-400">2</kbd>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="px-4 py-3 border-t border-neutral-100 flex gap-2">
+        <Button variant="ghost" onClick={onSkip} className="flex-1 h-10 text-sm text-neutral-500">
+          Skip
+          <kbd className="ml-1.5 text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">esc</kbd>
+        </Button>
+        <Button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className="flex-1 h-10 text-sm bg-neutral-900 hover:bg-neutral-800"
+        >
+          Valider
+          <kbd className="ml-1.5 text-[10px] text-neutral-400 bg-neutral-700 px-1.5 py-0.5 rounded">&#9166;</kbd>
+        </Button>
+      </div>
+    </div>
   )
 }

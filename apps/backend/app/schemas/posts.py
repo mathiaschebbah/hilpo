@@ -43,3 +43,25 @@ class ProgressOut(BaseModel):
 class LookupOut(BaseModel):
     id: int
     name: str
+
+
+class PostGridItem(BaseModel):
+    ig_media_id: int
+    shortcode: str | None = None
+    media_type: str
+    media_product_type: str
+    thumbnail_url: str | None = None
+    category: str | None = None
+    visual_format: str | None = None
+    strategy: str | None = None
+    annotation_category: str | None = None
+    annotation_visual_format: str | None = None
+    annotation_strategy: str | None = None
+    is_annotated: bool = False
+
+
+class PostGridPage(BaseModel):
+    items: list[PostGridItem]
+    total: int
+    offset: int
+    limit: int

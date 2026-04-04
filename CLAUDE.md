@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **1.9** — 2026-04-04
+> Version **2.0** — 2026-04-04
 
 ## Double dimension du projet
 
@@ -42,6 +42,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 2.0 | 2026-04-04 | GCS URLs signées, vue dataset, filtrage Views, conventions typo |
 | 1.9 | 2026-04-04 | Frontend React + shadcn/ui, Phase 1 quasi complète |
 | 1.8 | 2026-04-04 | Architecture en couches (routers→services→repos), API versionnée /v1/ |
 | 1.7 | 2026-04-04 | Backend FastAPI + Docker Postgres, Phase 1 en cours, hook → PreToolUse |

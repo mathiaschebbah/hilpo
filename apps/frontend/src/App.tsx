@@ -1,83 +1,139 @@
+import { useState } from 'react'
 import { useAnnotation } from '@/hooks/useAnnotation'
 import { MediaViewer } from '@/components/MediaViewer'
 import { AnnotationForm } from '@/components/AnnotationForm'
+import { PostGrid } from '@/components/PostGrid'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
+
+type View = 'annotate' | 'grid'
 
 function App() {
+  const [view, setView] = useState<View>('annotate')
   const { current, done, progress, categories, visualFormats, loading, submit, skip } = useAnnotation()
 
   const pct = progress.total > 0 ? (progress.annotated / progress.total) * 100 : 0
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b px-6 py-4">
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-semibold tracking-tight">HILPO — Annotation</h1>
+    <div className="min-h-screen bg-neutral-50">
+      <header className="bg-white border-b border-neutral-200 px-6 py-3 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
+            <h1 className="text-sm font-semibold tracking-tight text-neutral-900">HILPO</h1>
+
+            <div className="flex p-0.5 bg-neutral-100 rounded-md">
+              <button
+                onClick={() => setView('annotate')}
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-all ${
+                  view === 'annotate'
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-700'
+                }`}
+              >
+                Annoter
+              </button>
+              <button
+                onClick={() => setView('grid')}
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-all ${
+                  view === 'grid'
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-700'
+                }`}
+              >
+                Dataset
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-xs tabular-nums text-neutral-500">
               {progress.annotated} / {progress.total}
             </span>
-            <Progress value={pct} className="w-32" />
+            <Progress value={pct} className="w-24 h-1.5" />
+            <span className="text-xs font-medium tabular-nums text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-full">
+              {pct.toFixed(1)}%
+            </span>
           </div>
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto p-6 space-y-4">
-        {loading && !current && (
-          <div className="text-center py-20 text-muted-foreground">Chargement...</div>
-        )}
+      {view === 'grid' && (
+        <main className="max-w-6xl mx-auto p-6">
+          <PostGrid />
+        </main>
+      )}
 
-        {done && (
-          <div className="text-center py-20">
-            <h2 className="text-2xl font-semibold">Annotation terminée</h2>
-            <p className="text-muted-foreground mt-2">
-              {progress.annotated} posts annotés sur {progress.total}
-            </p>
-          </div>
-        )}
-
-        {current && !done && (
-          <>
-            <div className="flex items-center gap-2">
-              <Badge>{current.post.media_product_type}</Badge>
-              <Badge variant="outline">{current.post.media_type}</Badge>
-              {current.post.shortcode && (
-                <a
-                  href={`https://www.instagram.com/p/${current.post.shortcode}/`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-muted-foreground hover:underline ml-auto"
-                >
-                  Voir sur Instagram
-                </a>
-              )}
+      {view === 'annotate' && (
+        <>
+          {loading && !current && (
+            <div className="flex items-center justify-center h-[80vh]">
+              <p className="text-sm text-neutral-400 animate-pulse">Chargement...</p>
             </div>
+          )}
 
-            <MediaViewer media={current.media} />
+          {done && (
+            <div className="flex flex-col items-center justify-center h-[80vh] gap-3">
+              <div className="text-4xl">&#10003;</div>
+              <h2 className="text-lg font-semibold text-neutral-900">Annotation terminée</h2>
+              <p className="text-sm text-neutral-500">
+                {progress.annotated} posts annotés
+              </p>
+            </div>
+          )}
 
-            {current.post.caption && (
-              <>
-                <Separator />
-                <p className="text-sm text-muted-foreground whitespace-pre-line line-clamp-4">
-                  {current.post.caption}
-                </p>
-              </>
-            )}
+          {current && !done && (
+            <main className="max-w-6xl mx-auto p-6">
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-neutral-900 text-white text-[11px] hover:bg-neutral-800">
+                      {current.post.media_product_type}
+                    </Badge>
+                    <Badge variant="outline" className="text-[11px]">
+                      {current.post.media_type}
+                    </Badge>
+                    {current.media.length > 1 && (
+                      <span className="text-xs text-neutral-400">
+                        {current.media.length} slides
+                      </span>
+                    )}
+                    {current.post.shortcode && (
+                      <a
+                        href={`https://www.instagram.com/p/${current.post.shortcode}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-neutral-400 hover:text-neutral-700 transition-colors ml-auto"
+                      >
+                        Voir sur IG &#8599;
+                      </a>
+                    )}
+                  </div>
 
-            <Separator />
+                  <MediaViewer media={current.media} />
 
-            <AnnotationForm
-              data={current}
-              categories={categories}
-              visualFormats={visualFormats}
-              onSubmit={submit}
-              onSkip={skip}
-            />
-          </>
-        )}
-      </main>
+                  {current.post.caption && (
+                    <div className="bg-white rounded-lg border border-neutral-200 p-4">
+                      <p className="text-sm leading-relaxed text-neutral-600 whitespace-pre-line line-clamp-6 max-w-prose">
+                        {current.post.caption}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="lg:sticky lg:top-20 lg:self-start">
+                  <AnnotationForm
+                    data={current}
+                    categories={categories}
+                    visualFormats={visualFormats}
+                    onSubmit={submit}
+                    onSkip={skip}
+                  />
+                </div>
+              </div>
+            </main>
+          )}
+        </>
+      )}
     </div>
   )
 }

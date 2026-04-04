@@ -43,27 +43,32 @@ export function useAnnotation() {
   const [categories, setCategories] = useState<Lookup[]>([])
   const [visualFormats, setVisualFormats] = useState<Lookup[]>([])
   const [loading, setLoading] = useState(true)
+  const [ready, setReady] = useState(false)
 
   const loadNext = useCallback(async () => {
     setLoading(true)
-    const data = await fetchNextPost()
+    const [data, prog] = await Promise.all([fetchNextPost(), fetchProgress()])
     if (data.done) {
       setDone(true)
     } else {
       setCurrent(data)
     }
-    const prog = await fetchProgress()
     setProgress(prog)
     setLoading(false)
   }, [])
 
+  // Charger les lookups d'abord, puis le premier post
   useEffect(() => {
     Promise.all([fetchCategories(), fetchVisualFormats()]).then(([cats, vfs]) => {
       setCategories(cats)
       setVisualFormats(vfs)
+      setReady(true)
     })
-    loadNext()
-  }, [loadNext])
+  }, [])
+
+  useEffect(() => {
+    if (ready) loadNext()
+  }, [ready, loadNext])
 
   const submit = async (categoryId: number, visualFormatId: number, strategy: 'Organic' | 'Brand Content') => {
     if (!current) return
@@ -78,5 +83,5 @@ export function useAnnotation() {
 
   const skip = () => loadNext()
 
-  return { current, done, progress, categories, visualFormats, loading, submit, skip }
+  return { current, done, progress, categories, visualFormats, loading: loading || !ready, submit, skip }
 }

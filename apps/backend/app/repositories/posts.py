@@ -59,6 +59,57 @@ class PostRepository:
         )
         return dict(result.mappings().first())
 
+    async def find_all_sample_posts(
+        self, annotator: str, offset: int = 0, limit: int = 50,
+        status: str | None = None, category: str | None = None,
+    ) -> tuple[list[dict], int]:
+        where_clauses = []
+        params: dict = {"annotator": annotator, "offset": offset, "limit": limit}
+
+        if status == "annotated":
+            where_clauses.append("a.id IS NOT NULL")
+        elif status == "pending":
+            where_clauses.append("a.id IS NULL")
+
+        if category:
+            where_clauses.append("c.name = :category")
+            params["category"] = category
+
+        where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        result = await self.db.execute(
+            text(f"""
+                SELECT
+                    p.ig_media_id, p.shortcode, p.media_type, p.media_product_type,
+                    c.name AS category, vf.name AS visual_format,
+                    h.strategy,
+                    ac.name AS annotation_category,
+                    avf.name AS annotation_visual_format,
+                    a.strategy AS annotation_strategy,
+                    a.id AS annotation_id,
+                    (SELECT COALESCE(pm.thumbnail_url, pm.media_url) FROM post_media pm
+                     WHERE pm.parent_ig_media_id = p.ig_media_id
+                     ORDER BY pm.media_order LIMIT 1) AS thumbnail_url,
+                    COUNT(*) OVER () AS total_count
+                FROM sample_posts sp
+                JOIN posts p ON p.ig_media_id = sp.ig_media_id
+                LEFT JOIN heuristic_labels h ON h.ig_media_id = p.ig_media_id
+                LEFT JOIN categories c ON c.id = h.category_id
+                LEFT JOIN visual_formats vf ON vf.id = h.visual_format_id
+                LEFT JOIN annotations a
+                    ON a.ig_media_id = p.ig_media_id AND a.annotator = :annotator
+                LEFT JOIN categories ac ON ac.id = a.category_id
+                LEFT JOIN visual_formats avf ON avf.id = a.visual_format_id
+                WHERE 1=1 {where_sql}
+                ORDER BY a.id IS NOT NULL DESC, p.timestamp DESC
+                OFFSET :offset LIMIT :limit
+            """),
+            params,
+        )
+        rows = [dict(r) for r in result.mappings().all()]
+        total = rows[0]["total_count"] if rows else 0
+        return rows, total
+
     async def find_all_categories(self) -> list[dict]:
         result = await self.db.execute(
             text("SELECT id, name FROM categories ORDER BY name")

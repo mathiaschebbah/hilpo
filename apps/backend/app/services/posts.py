@@ -1,10 +1,13 @@
 from app.exceptions import AllAnnotatedError
+from app.gcs import sign_gcs_url
 from app.repositories.posts import PostRepository
 from app.schemas.posts import (
     HeuristicLabels,
     LookupOut,
     MediaOut,
     NextPostOut,
+    PostGridItem,
+    PostGridPage,
     PostOut,
     ProgressOut,
 )
@@ -38,12 +41,44 @@ class PostService:
                 heuristic_strategy=row["heuristic_strategy"],
                 heuristic_subcategory=row["heuristic_subcategory"],
             ),
-            media=[MediaOut(**m) for m in media_rows],
+            media=[
+                MediaOut(
+                    **{**m, "media_url": sign_gcs_url(m.get("media_url")),
+                       "thumbnail_url": sign_gcs_url(m.get("thumbnail_url"))}
+                )
+                for m in media_rows
+            ],
         )
 
     async def get_progress(self, annotator: str) -> ProgressOut:
         row = await self.repository.count_progress(annotator)
         return ProgressOut(**row)
+
+    async def get_grid(
+        self, annotator: str, offset: int, limit: int,
+        status: str | None, category: str | None,
+    ) -> PostGridPage:
+        rows, total = await self.repository.find_all_sample_posts(
+            annotator, offset, limit, status, category,
+        )
+        items = [
+            PostGridItem(
+                ig_media_id=r["ig_media_id"],
+                shortcode=r["shortcode"],
+                media_type=r["media_type"],
+                media_product_type=r["media_product_type"],
+                thumbnail_url=sign_gcs_url(r["thumbnail_url"]),
+                category=r["category"],
+                visual_format=r["visual_format"],
+                strategy=r["strategy"],
+                annotation_category=r["annotation_category"],
+                annotation_visual_format=r["annotation_visual_format"],
+                annotation_strategy=r["annotation_strategy"],
+                is_annotated=r["annotation_id"] is not None,
+            )
+            for r in rows
+        ]
+        return PostGridPage(items=items, total=total, offset=offset, limit=limit)
 
     async def get_categories(self) -> list[LookupOut]:
         rows = await self.repository.find_all_categories()

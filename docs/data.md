@@ -2,7 +2,7 @@
 
 ## Source
 
-21 425 posts Instagram @viewsfrance. Un échantillon stratifié de 2 000 posts sera sélectionné pour l'annotation.
+21 425 posts Instagram dont 21 065 @viewsfrance et 360 @miramagazine. L'échantillon de 2 000 posts est filtré sur **@viewsfrance uniquement** (ig_user_id = 17841403755827826).
 
 ## Fichiers (dans data/, gitignored)
 

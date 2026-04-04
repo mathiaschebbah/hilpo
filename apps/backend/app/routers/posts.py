@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.repositories.posts import PostRepository
-from app.schemas.posts import LookupOut, NextPostOut, ProgressOut
+from app.schemas.posts import LookupOut, NextPostOut, PostGridPage, ProgressOut
 from app.services.posts import PostService
 
 router = APIRouter(prefix="/v1/posts", tags=["posts"])
@@ -11,6 +11,18 @@ router = APIRouter(prefix="/v1/posts", tags=["posts"])
 
 def get_service(db: AsyncSession = Depends(get_db)) -> PostService:
     return PostService(PostRepository(db))
+
+
+@router.get("/", response_model=PostGridPage)
+async def list_posts(
+    annotator: str = "mathias",
+    offset: int = 0,
+    limit: int = 50,
+    status: str | None = None,
+    category: str | None = None,
+    service: PostService = Depends(get_service),
+):
+    return await service.get_grid(annotator, offset, limit, status, category)
 
 
 @router.get("/next", response_model=NextPostOut)

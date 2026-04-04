@@ -138,9 +138,12 @@ def select_sample(cur, n=2000, seed=42):
                    COUNT(*) OVER (PARTITION BY h.visual_format_id, h.strategy) AS group_size
             FROM heuristic_labels h
             JOIN posts p ON p.ig_media_id = h.ig_media_id
+            WHERE p.ig_user_id = 17841403755827826
         ) ranked
         WHERE rn <= GREATEST(1, ROUND(%(n)s::numeric * group_size / (
-            SELECT COUNT(*) FROM heuristic_labels
+            SELECT COUNT(*) FROM heuristic_labels h2
+            JOIN posts p2 ON p2.ig_media_id = h2.ig_media_id
+            WHERE p2.ig_user_id = 17841403755827826
         )))
         ORDER BY RANDOM()
         LIMIT %(n)s
