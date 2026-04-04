@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
@@ -14,8 +14,20 @@ type Props = {
   onSkip: () => void
 }
 
+const FORMAT_PREFIX: Record<string, string> = {
+  FEED: 'post_',
+  REELS: 'reel_',
+  STORY: 'story_',
+}
+
 export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSkip }: Props) {
   const { heuristic } = data
+
+  const filteredFormats = useMemo(() => {
+    const prefix = FORMAT_PREFIX[data.post.media_product_type]
+    if (!prefix) return visualFormats
+    return visualFormats.filter(vf => vf.name.startsWith(prefix))
+  }, [visualFormats, data.post.media_product_type])
 
   const [categoryId, setCategoryId] = useState<number | null>(null)
   const [visualFormatId, setVisualFormatId] = useState<number | null>(null)
@@ -46,7 +58,8 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
   }, [canSubmit, handleSubmit, onSkip])
 
   const categoryName = categories.find(c => c.id === categoryId)?.name
-  const formatName = visualFormats.find(vf => vf.id === visualFormatId)?.name
+  const formatName = filteredFormats.find(vf => vf.id === visualFormatId)?.name
+    ?? visualFormats.find(vf => vf.id === visualFormatId)?.name
   const categoryChanged = categoryId !== heuristic.category_id
   const formatChanged = visualFormatId !== heuristic.visual_format_id
   const strategyChanged = strategy !== heuristic.heuristic_strategy
@@ -113,7 +126,7 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
               {formatName ?? <span className="text-neutral-400">Choisir...</span>}
             </SelectTrigger>
             <SelectContent>
-              {visualFormats.map(vf => (
+              {filteredFormats.map(vf => (
                 <SelectItem key={vf.id} value={vf.id.toString()} className="text-sm">{vf.name}</SelectItem>
               ))}
             </SelectContent>

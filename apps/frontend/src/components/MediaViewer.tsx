@@ -33,7 +33,9 @@ export function MediaViewer({ media }: { media: Media[] }) {
     )
   }
 
-  const item = media[index]
+  const safeIndex = Math.min(index, media.length - 1)
+  const item = media[safeIndex]
+  if (!item) return null
   const isVideo = item.media_type === 'VIDEO'
 
   const navigate = (newIndex: number) => {
