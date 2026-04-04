@@ -61,6 +61,32 @@ Chaque agent a un prompt par type de post. Ex : `agent_categorie × REELS` a son
 4. Évaluation passive sur les posts suivants
 5. Si accuracy ≥ ancienne → promotion en actif, sinon → rejeté
 
+## Séparation backend / engine
+
+```
+hilpo/              ← package Python : moteur HILPO
+├── inference.py    ← appel API vision, prédiction
+├── rewriter.py     ← agent rewriter, buffer d'erreurs
+├── loop.py         ← boucle HILPO (promotion/rollback)
+└── eval.py         ← métriques, évaluation
+
+apps/backend/       ← FastAPI : couche HTTP pour l'interface d'annotation
+```
+
+- Le **backend** gère les annotations humaines, le CRUD taxonomie, le serving des posts.
+- Le **package `hilpo/`** contient toute la logique IA : inférence, rewriter, boucle d'optimisation, évaluation.
+- Le backend peut importer `hilpo` pour exposer des endpoints, mais la logique métier vit dans le package.
+- Le package `hilpo/` est utilisable indépendamment (scripts, simulations, éval CLI).
+
+### Contraintes de séparation des données
+
+| Split | Modèle prédit ? | Prompt optimisé dessus ? |
+|-------|-----------------|--------------------------|
+| **dev** (1 563) | ✅ oui | ✅ oui — les erreurs nourrissent le rewriter |
+| **test** (437) | ❌ pas pendant l'optimisation | ❌ jamais — évaluation finale uniquement |
+
+L'humain annote **en aveugle** (sans voir la prédiction du modèle) pour éviter le biais.
+
 ## Formalisation mathématique
 
 ### Notation
