@@ -19,6 +19,10 @@
 - `max-w-prose` sur les blocs de texte (caption)
 - `tabular-nums` uniquement sur les données numériques alignées
 
+## Skills
+
+- **`/setup`** ([`.claude/skills/setup/SKILL.md`](../.claude/skills/setup/SKILL.md)) : initialise le contexte en début de session — lit CLAUDE.md, phases, git log, vérifie les services, présente un résumé.
+
 ## Hooks d'interaction
 
 - **Hook PreToolUse sur git commit** ([`.claude/hooks/check-claude-md.py`](../.claude/hooks/check-claude-md.py)) : avant chaque `git commit`, l'agent analyse les changements, propose une mise à jour de CLAUDE.md via AskUserQuestion, et inclut les docs dans le commit si l'humain valide. Les commits `docs: update CLAUDE.md` passent sans blocage (évite la boucle infinie).
