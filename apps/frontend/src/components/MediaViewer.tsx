@@ -25,7 +25,7 @@ export function MediaViewer({ media }: { media: Media[] }) {
     }
   }, [index])
 
-  if (media.length === 0) {
+  if (!media || media.length === 0) {
     return (
       <div className="flex items-center justify-center h-[40vh] bg-neutral-100 rounded-lg text-neutral-400 text-sm">
         Pas de média
