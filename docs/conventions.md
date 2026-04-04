@@ -10,6 +10,9 @@
 - Endpoints versionnés sous `/v1/`
 - POST retourne `201 Created` + header `Location`
 - Exceptions custom + handler global (pas de try/catch dans les routers)
+- `ig_media_id` sérialisé en **string** partout (JSON perd la précision sur les BIGINT > 2^53)
+- Proxy Vite (`/v1` → `127.0.0.1:8000`) — élimine les problèmes CORS en dev
+- Skip : exclusion multiple (liste d'IDs skippés en session, pas juste le post courant)
 
 ## Typographie frontend
 

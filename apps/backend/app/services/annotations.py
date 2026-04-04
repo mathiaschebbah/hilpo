@@ -8,10 +8,10 @@ class AnnotationService:
 
     async def create(self, data: AnnotationCreate, annotator: str) -> AnnotationOut:
         row = await self.repository.upsert(
-            ig_media_id=data.ig_media_id,
+            ig_media_id=int(data.ig_media_id),
             category_id=data.category_id,
             visual_format_id=data.visual_format_id,
             strategy=data.strategy,
             annotator=annotator,
         )
-        return AnnotationOut(**row)
+        return AnnotationOut(**{**row, "ig_media_id": str(row["ig_media_id"])})

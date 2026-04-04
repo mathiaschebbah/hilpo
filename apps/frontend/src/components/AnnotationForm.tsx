@@ -25,7 +25,7 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
     setCategoryId(heuristic.category_id)
     setVisualFormatId(heuristic.visual_format_id)
     setStrategy(heuristic.heuristic_strategy as 'Organic' | 'Brand Content' | null)
-  }, [heuristic])
+  }, [data.post.ig_media_id])
 
   const canSubmit = categoryId !== null && visualFormatId !== null && strategy !== null
 

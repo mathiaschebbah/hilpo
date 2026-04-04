@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -20,9 +19,4 @@ async def create_annotation(
     annotator: str = "mathias",
     service: AnnotationService = Depends(get_service),
 ):
-    annotation = await service.create(data, annotator)
-    return JSONResponse(
-        status_code=201,
-        content=annotation.model_dump(mode="json"),
-        headers={"Location": f"/v1/annotations/{annotation.id}"},
-    )
+    return await service.create(data, annotator)

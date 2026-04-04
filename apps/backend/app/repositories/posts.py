@@ -6,9 +6,20 @@ class PostRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def find_next_unannotated(self, annotator: str) -> dict | None:
+    async def find_next_unannotated(self, annotator: str, exclude: list[int] | None = None) -> dict | None:
+        exclude = exclude or []
+        exclude_clause = ""
+        params: dict = {"annotator": annotator}
+        if exclude:
+            placeholders = []
+            for index, media_id in enumerate(exclude):
+                key = f"exclude_{index}"
+                placeholders.append(f":{key}")
+                params[key] = media_id
+            exclude_clause = f"AND p.ig_media_id NOT IN ({', '.join(placeholders)})"
+
         result = await self.db.execute(
-            text("""
+            text(f"""
                 SELECT
                     p.ig_media_id, p.shortcode, p.caption, p.timestamp,
                     p.media_type, p.media_product_type,
@@ -23,11 +34,11 @@ class PostRepository:
                 LEFT JOIN visual_formats vf ON vf.id = h.visual_format_id
                 LEFT JOIN annotations a
                     ON a.ig_media_id = p.ig_media_id AND a.annotator = :annotator
-                WHERE a.id IS NULL
+                WHERE a.id IS NULL {exclude_clause}
                 ORDER BY sp.presentation_order
                 LIMIT 1
             """),
-            {"annotator": annotator},
+            params,
         )
         row = result.mappings().first()
         return dict(row) if row else None

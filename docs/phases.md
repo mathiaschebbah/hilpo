@@ -6,7 +6,7 @@
 - PostgreSQL — **opérationnel** (Docker, schéma appliqué, données importées)
 - Annotation humaine seule, pas d'IA
 - Produit la vérité terrain
-- **Statut** : en cours — test end-to-end à faire
+- **Statut** : ✅ terminée — test E2E validé (annotation, skip, vidéo player)
 
 ## Phase 2 — Classificateur baseline
 - Intégration API modèle vision

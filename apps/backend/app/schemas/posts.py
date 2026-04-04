@@ -21,7 +21,7 @@ class HeuristicLabels(BaseModel):
 
 
 class PostOut(BaseModel):
-    ig_media_id: int
+    ig_media_id: str
     shortcode: str | None
     caption: str | None
     timestamp: datetime
@@ -46,7 +46,7 @@ class LookupOut(BaseModel):
 
 
 class PostGridItem(BaseModel):
-    ig_media_id: int
+    ig_media_id: str
     shortcode: str | None = None
     media_type: str
     media_product_type: str

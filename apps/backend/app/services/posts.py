@@ -1,5 +1,5 @@
 from app.exceptions import AllAnnotatedError
-from app.gcs import sign_gcs_url
+from app.gcs import sign_gcs_url, sign_urls_batch
 from app.repositories.posts import PostRepository
 from app.schemas.posts import (
     HeuristicLabels,
@@ -17,8 +17,8 @@ class PostService:
     def __init__(self, repository: PostRepository):
         self.repository = repository
 
-    async def get_next_post(self, annotator: str) -> NextPostOut:
-        row = await self.repository.find_next_unannotated(annotator)
+    async def get_next_post(self, annotator: str, exclude: list[int] | None = None) -> NextPostOut:
+        row = await self.repository.find_next_unannotated(annotator, exclude)
         if not row:
             raise AllAnnotatedError(annotator)
 
@@ -26,7 +26,7 @@ class PostService:
 
         return NextPostOut(
             post=PostOut(
-                ig_media_id=row["ig_media_id"],
+                ig_media_id=str(row["ig_media_id"]),
                 shortcode=row["shortcode"],
                 caption=row["caption"],
                 timestamp=row["timestamp"],
@@ -61,13 +61,18 @@ class PostService:
         rows, total = await self.repository.find_all_sample_posts(
             annotator, offset, limit, status, category,
         )
+
+        # Signer toutes les thumbnails en parallèle (au lieu de séquentiellement)
+        all_urls = [r["thumbnail_url"] for r in rows]
+        signed_map = await sign_urls_batch(all_urls)
+
         items = [
             PostGridItem(
-                ig_media_id=r["ig_media_id"],
+                ig_media_id=str(r["ig_media_id"]),
                 shortcode=r["shortcode"],
                 media_type=r["media_type"],
                 media_product_type=r["media_product_type"],
-                thumbnail_url=sign_gcs_url(r["thumbnail_url"]),
+                thumbnail_url=signed_map.get(r["thumbnail_url"], r["thumbnail_url"]),
                 category=r["category"],
                 visual_format=r["visual_format"],
                 strategy=r["strategy"],

@@ -4,7 +4,7 @@ import { fetchNextPost, fetchProgress, fetchCategories, fetchVisualFormats, subm
 type Lookup = { id: number; name: string }
 
 type Post = {
-  ig_media_id: number
+  ig_media_id: string
   shortcode: string | null
   caption: string | null
   timestamp: string
@@ -42,19 +42,35 @@ export function useAnnotation() {
   const [progress, setProgress] = useState({ total: 0, annotated: 0 })
   const [categories, setCategories] = useState<Lookup[]>([])
   const [visualFormats, setVisualFormats] = useState<Lookup[]>([])
+  const [skippedIds, setSkippedIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
   const [ready, setReady] = useState(false)
 
-  const loadNext = useCallback(async () => {
+  const loadNext = useCallback(async (excludeIds: string[] = []) => {
     setLoading(true)
-    const [data, prog] = await Promise.all([fetchNextPost(), fetchProgress()])
-    if (data.done) {
-      setDone(true)
-    } else {
-      setCurrent(data)
+    try {
+      let activeExcludes = excludeIds
+      let [data, prog] = await Promise.all([fetchNextPost('mathias', activeExcludes), fetchProgress()])
+
+      // If every remaining post was skipped, restart from the skipped pool.
+      if (data.done && activeExcludes.length > 0) {
+        activeExcludes = []
+        setSkippedIds([])
+        ;[data, prog] = await Promise.all([fetchNextPost(), fetchProgress()])
+      }
+
+      if (data.done) {
+        setDone(true)
+        setCurrent(null)
+      } else {
+        setDone(false)
+        setCurrent(data)
+      }
+      setProgress(prog)
+    } finally {
+      setLoading(false)
     }
-    setProgress(prog)
-    setLoading(false)
   }, [])
 
   // Charger les lookups d'abord, puis le premier post
@@ -71,17 +87,29 @@ export function useAnnotation() {
   }, [ready, loadNext])
 
   const submit = async (categoryId: number, visualFormatId: number, strategy: 'Organic' | 'Brand Content') => {
-    if (!current) return
-    await submitAnnotation({
-      ig_media_id: current.post.ig_media_id,
-      category_id: categoryId,
-      visual_format_id: visualFormatId,
-      strategy,
-    })
-    await loadNext()
+    if (!current || submitting) return
+    setSubmitting(true)
+    try {
+      const remainingSkippedIds = skippedIds.filter(id => id !== current.post.ig_media_id)
+      await submitAnnotation({
+        ig_media_id: current.post.ig_media_id,
+        category_id: categoryId,
+        visual_format_id: visualFormatId,
+        strategy,
+      })
+      setSkippedIds(remainingSkippedIds)
+      await loadNext(remainingSkippedIds)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  const skip = () => loadNext()
+  const skip = useCallback(async () => {
+    if (!current) return
+    const nextSkippedIds = [...new Set([...skippedIds, current.post.ig_media_id])]
+    setSkippedIds(nextSkippedIds)
+    await loadNext(nextSkippedIds)
+  }, [current, skippedIds, loadNext])
 
-  return { current, done, progress, categories, visualFormats, loading: loading || !ready, submit, skip }
+  return { current, done, progress, categories, visualFormats, loading: loading || !ready, submitting, submit, skip }
 }

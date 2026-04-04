@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -28,9 +28,10 @@ async def list_posts(
 @router.get("/next", response_model=NextPostOut)
 async def get_next_post(
     annotator: str = "mathias",
+    exclude: list[int] = Query(default_factory=list),
     service: PostService = Depends(get_service),
 ):
-    return await service.get_next_post(annotator)
+    return await service.get_next_post(annotator, exclude)
 
 
 @router.get("/progress", response_model=ProgressOut)

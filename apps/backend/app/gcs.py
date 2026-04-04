@@ -1,5 +1,6 @@
 """Signature d'URLs GCS pour accès aux médias privés."""
 
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any, cast
@@ -77,3 +78,23 @@ def sign_gcs_url(url: str | None, expiration_minutes: int = 60) -> str | None:
     except Exception:
         logger.exception("Échec signature GCS URL: %s", url)
         return url
+
+
+async def sign_urls_batch(urls: list[str | None], expiration_minutes: int = 60) -> dict[str, str]:
+    """Signe plusieurs URLs GCS en parallèle (threads). Retourne {original_url: signed_url}."""
+    if not settings.gcs_sign_urls:
+        return {}
+
+    unique_gcs = {u for u in urls if u and is_gcs_url(u)}
+    if not unique_gcs:
+        return {}
+
+    sem = asyncio.Semaphore(20)
+
+    async def _sign_one(url: str) -> tuple[str, str]:
+        async with sem:
+            signed = await asyncio.to_thread(sign_gcs_url, url, expiration_minutes)
+            return url, signed or url
+
+    results = await asyncio.gather(*[_sign_one(u) for u in unique_gcs])
+    return dict(results)

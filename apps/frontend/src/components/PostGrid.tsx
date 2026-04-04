@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { fetchPostGrid, fetchCategories } from '@/lib/api'
 
 type GridItem = {
-  ig_media_id: number
+  ig_media_id: string
   shortcode: string | null
   media_type: string
   media_product_type: string
@@ -21,7 +21,7 @@ type GridItem = {
 
 type Lookup = { id: number; name: string }
 
-const PAGE_SIZE = 50
+const PAGE_SIZE = 20
 
 export function PostGrid() {
   const [items, setItems] = useState<GridItem[]>([])
@@ -57,7 +57,11 @@ export function PostGrid() {
     <div className="space-y-4">
       {/* Filtres */}
       <div className="flex items-center gap-3">
-        <Select value={statusFilter} onValueChange={v => { setStatusFilter(v === 'all' ? '' : v); setOffset(0) }}>
+        <Select value={statusFilter} onValueChange={v => {
+          const next = v ?? ''
+          setStatusFilter(next === 'all' ? '' : next)
+          setOffset(0)
+        }}>
           <SelectTrigger className="w-36 h-8 text-xs">
             {statusFilter === 'annotated' ? 'Annotés' : statusFilter === 'pending' ? 'En attente' : 'Tous'}
           </SelectTrigger>
@@ -68,7 +72,11 @@ export function PostGrid() {
           </SelectContent>
         </Select>
 
-        <Select value={categoryFilter} onValueChange={v => { setCategoryFilter(v === 'all' ? '' : v); setOffset(0) }}>
+        <Select value={categoryFilter} onValueChange={v => {
+          const next = v ?? ''
+          setCategoryFilter(next === 'all' ? '' : next)
+          setOffset(0)
+        }}>
           <SelectTrigger className="w-44 h-8 text-xs">
             {categoryFilter || 'Toutes catégories'}
           </SelectTrigger>
