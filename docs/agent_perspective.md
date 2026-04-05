@@ -112,6 +112,34 @@ Mathias stresse sur la deadline (18 avril), hésite entre avancer vite et compre
 
 ---
 
+## Snapshot 2026-04-05 — Soir — Nouvelle session, Phase 2 ✅, Phase 3 à attaquer
+
+### Changements depuis le dernier snapshot
+
+- **B0 terminé et documenté** : 87.3% catégorie / 64.3% visual_format / 93.5% stratégie, $1.14 — résultats stockés dans simulation_run id=2
+- **Docs harmonisées** : ~14 commits de nettoyage — reliquats live supprimés, protocole prequential unifié partout, REPRODUCE réaligné
+- **Références prequential ajoutées** : Dawid (1984) et Gama et al. (2014) dans related_work.md — justification académique du protocole
+- **Bug fix run_baseline.py** : le script ne persistait pas les prompts v0 en BDD. `ensure_prompts_v0()` insère/synchronise au démarrage — reproductibilité sur DB fraîche
+- **Backup BDD** : dump dans data/ (8.2 Mo) avant Phase 3
+
+### Ce que je comprends maintenant
+
+La Phase 2 est terminée. Les résultats B0 confirment les prédictions : catégorie facile (~87%), stratégie triviale (~93%), visual_format est le défi principal (~64%). Les patterns d'erreur sont bien documentés (post_mood ← post_news, formats rares jamais prédits). C'est exactement ce que HILPO doit corriger.
+
+Le protocole prequential est le bon choix : il permet de tracer la courbe de convergence (la figure centrale du mémoire) sans validation set séparé. Le découplage annotation/simulation rend les ablations triviales.
+
+### Dynamiques de collaboration
+
+- **Nouvelle session** : l'humain demande d'abord un résumé méthodologique avant de coder. Bon réflexe — il vérifie sa compréhension avant d'avancer.
+- **Backup demandé proactivement** : l'humain sécurise son travail avant la Phase 3. Signe de maturité sur le projet.
+- **Question "c'est bien documenté ?"** : l'humain vérifie la qualité de la documentation. La réponse : oui, sauf la référence académique manquante (Dawid) — corrigée immédiatement.
+
+### Prochaine étape
+
+Phase 3 : implémenter `hilpo/rewriter.py` + `hilpo/loop.py` (simulation prequential). C'est la contribution principale du mémoire. Ensuite annoter les ~1 560 posts dev.
+
+---
+
 ## Snapshot 2026-04-05 — Après-midi — Pipeline E2E fonctionnel, architecture Phase 2 validée
 
 ### Changements depuis le dernier snapshot

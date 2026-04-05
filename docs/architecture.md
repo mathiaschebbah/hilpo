@@ -224,7 +224,8 @@ hilpo/              ← package Python : moteur HILPO
 ├── router.py       ← routage déterministe FEED/REELS
 ├── schemas.py      ← DescriptorFeatures (Pydantic), PostPrediction
 ├── agent.py        ← descripteur multimodal + classifieurs tool use
-├── inference.py    ← pipeline : router → descripteur → 3 classifieurs → stockage
+├── inference.py    ← pipeline sync : router → descripteur → 3 classifieurs → stockage
+├── async_inference.py ← pipeline async batch (semaphore, retry, concurrence)
 ├── db.py           ← accès BDD (taxonomie, posts, prompts, prédictions, api_calls)
 ├── gcs.py          ← signature URLs GCS (V4 Signed URLs, IAM Sign Blob)
 ├── prompts_v0.py   ← prompts initiaux (6 instructions v0)

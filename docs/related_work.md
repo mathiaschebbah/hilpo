@@ -53,7 +53,7 @@ Travaux sur la classification de contenus social media combinant image et texte.
 | Travail | Année | Venue | Pertinence |
 |---------|-------|-------|------------|
 | **Dawid** | 1984 | JRSS-A | Introduit l'évaluation **prequential** (predictive sequential) : chaque observation est d'abord prédite puis utilisée pour mettre à jour le modèle. Justifie notre protocole de simulation. |
-| Gama et al. | 2013 | ACM CS | Survey sur l'apprentissage en flux de données. Formalise le prequential comme standard d'évaluation pour les modèles adaptatifs. |
+| Gama et al. | 2014 | ACM CS | Survey sur l'apprentissage en flux de données. Formalise le prequential comme standard d'évaluation pour les modèles adaptatifs. |
 
 HILPO adopte le protocole prequential : chaque post dev est d'abord classifié avec le prompt courant (évaluation), puis l'annotation humaine est révélée et nourrit le buffer d'erreurs (apprentissage). Cela évite le besoin d'un validation set séparé dans le split dev, tout en garantissant qu'aucune donnée n'est utilisée pour optimiser avant d'avoir servi à évaluer.
 
