@@ -21,7 +21,7 @@ def main():
         print(json.dumps({}))
         return
 
-    message = """**Rappel : vérifie si CLAUDE.md et docs/ doivent être mis à jour.**
+    message = """**INSTRUCTION OBLIGATOIRE — Exécute les étapes suivantes avant de répondre à l'utilisateur.**
 
 1. **Audit avec sub-agent** : lance un sub-agent Explore en background pour comparer les fichiers `docs/` avec l'état actuel du code et du projet. Le sub-agent doit vérifier :
    - `docs/architecture.md` vs le code réel (apps/backend/, apps/frontend/, hilpo/)

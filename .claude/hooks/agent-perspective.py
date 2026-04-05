@@ -49,10 +49,10 @@ def main():
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
                 "additionalContext": (
-                    f"**Agent Perspective** : {commits_since} commits depuis la dernière mise à jour "
+                    f"**INSTRUCTION OBLIGATOIRE — Agent Perspective** : {commits_since} commits depuis la dernière mise à jour "
                     f"de `{PERSPECTIVE_FILE}`. "
-                    "Ajoute une nouvelle section datée avec ton état de compréhension actuel du projet, "
-                    "les décisions récentes, et les dynamiques de collaboration observées."
+                    "Tu DOIS ajouter une nouvelle section datée avec ton état de compréhension actuel du projet, "
+                    "les décisions récentes, et les dynamiques de collaboration observées. Fais-le maintenant."
                 ),
             }
         }))
