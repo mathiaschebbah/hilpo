@@ -81,3 +81,31 @@ Mathias stresse sur la deadline (18 avril), hésite entre avancer vite et compre
 - 284 posts test restants — objectif : finir ce soir
 - Phase 2 pas commencée — prévue ce soir/demain
 - Le stress de l'humain est normal et productif
+
+---
+
+## Snapshot 2026-04-05 — Nuit — Test terminé, 541 annotations, revue doubtful
+
+### Changements depuis le dernier snapshot
+
+- **437 test annotés** — split test complet, ground truth pure
+- Fusion `post_edito_photo` → `post_mood` : l'humain a montré des exemples internes Views qui prouvaient que la distinction n'existait pas en pratique
+- Ajout de formats : `reel_throwback`, `post_views_magazine`, `reel_views_magazine`, `story_views_magazine`, `reel_mood`
+- Mode "Pas sûr" dans l'onglet Annoter : toggle Nouveaux/Doubtful pour repasser sur les posts incertains
+- Filtre format visuel dans la grille
+- Descriptions mises à jour : `post_mood` (élargi), `post_selection` (gabarit Views + texte sur slides)
+- Audit automatique docs/ via sub-agent après chaque commit — a détecté et corrigé des incohérences dans data.md (comptages formats) et le faux chiffre 114K CSV
+
+### Observations sur la collaboration
+
+- La taxonomie est un **objet vivant** : elle évolue pendant l'annotation, pas avant. L'humain découvre les frontières floues en annotant (mood vs edito_photo, mood vs selection). L'agent ne peut pas deviner ces frontières — il faut les exemples visuels internes.
+- L'humain a montré des screenshots de la documentation interne Views pour clarifier les formats. C'est la connaissance métier que l'agent n'a pas.
+- Le rythme s'est accéléré : l'humain annotait ~80/h au début, puis ~150/h en fin de session (formats faciles d'abord).
+- L'agent a été corrigé sur le ton ("tu me parles mieux") — les injonctions "va annoter" étaient perçues comme condescendantes. Calibrer la communication reste un enjeu.
+
+### Prédictions mises à jour
+
+- Les 71 doubtful seront revus demain matin
+- Phase 2 demain après-midi
+- La fusion mood/edito_photo va simplifier la classification pour HILPO — moins d'ambiguïté
+- L'axe visual_format reste le plus dur (67 classes après fusion) mais les descriptions améliorées devraient aider
