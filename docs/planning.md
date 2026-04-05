@@ -14,35 +14,36 @@
 - ~~Import CSV + splits~~ ✅
 - ~~Test E2E~~ ✅
 
-### Dim 5 avril — Phase 2 : pipeline + baseline ✅
+### Dim 5 avril — Phase 2 + Phase 3 : pipeline + baseline + simulation ✅
 - ~~Architecture Phase 2~~ ✅ (descripteur + 3 classifieurs)
-- ~~Package hilpo/ implémenté~~ ✅ (9 modules)
+- ~~Package hilpo/ implémenté~~ ✅ (11 modules)
 - ~~Pipeline E2E fonctionnel~~ ✅ (3/3 match premier test)
 - ~~6 prompts v0 en BDD~~ ✅
 - ~~Script baseline B0 async~~ ✅
 - ~~B0 sur 437 posts test~~ ✅ (87.3% / 64.3% / 93.5%, $1.14)
+- ~~Phase 3 implémentée~~ ✅ (rewriter.py GPT-5.4, eval.py, run_simulation.py, migration 004)
 
-### Lun 6 — Phase 3 : rewriter + annotation dev
+### Lun 6 — Annotation sprint (3h gagnées grâce à Phase 3 faite en avance)
 | Créneau | Activité |
 |---------|----------|
-| Matin (3h) | Implémenter rewriter.py + loop.py (simulation, pas live) |
-| Après-midi (4h) | Annoter ~400-800 posts dev (rapide, pas d'attente modèle) |
+| Matin (3h) | Annoter ~450 posts dev |
+| Après-midi (4h) | Annoter ~600 posts dev |
 | Soir (2h) | Lancer simulation HILPO sur les posts annotés → premiers résultats |
 
-### Mar 7 — Annotation sprint
+### Mar 7 — Fin annotation + simulation
 | Créneau | Activité |
 |---------|----------|
-| Matin (3h) | Annoter 400 posts dev |
-| Après-midi (3h) | Annoter 400 posts dev |
-| Soir (2h) | Relancer simulation avec plus de données → vérifier convergence |
-
-### Mer 8 — Fin annotation + simulation finale
-| Créneau | Activité |
-|---------|----------|
-| Matin (3h) | Annoter derniers ~400 posts dev |
+| Matin (3h) | Annoter ~400 posts dev (fin des ~1 460 restants) |
 | Après-midi (2h) | Kappa intra-annotateur (re-swipe 50 posts à l'aveugle) |
 | Après-midi (1h) | Simulation finale + éval vN sur test |
 | Soir (2h) | Analyser résultats, ablations (rejouer avec B=1, 10, 50) |
+
+### Mer 8 — Métriques + figures (avancé d'un jour)
+| Créneau | Activité |
+|---------|----------|
+| Matin (3h) | Calculer toutes les métriques (F1, kappa, McNemar) |
+| Après-midi (3h) | Courbe de convergence + tableaux + matrice de confusion |
+| Soir (2h) | Commencer related work (2h d'écriture) |
 
 ### Jeu 9 — Métriques + figures
 | Créneau | Activité |
@@ -112,9 +113,8 @@
 
 | Jour | Posts | Cumulé | Phase active |
 |------|-------|--------|--------------|
-| Lun 6 | 400-800 | 400-800 dev | Annotation pure (rapide) + simulation le soir |
-| Mar 7 | 800 | 1200 dev | Annotation pure + simulation |
-| Mer 8 | ~360 | ~1560 dev | Fin annotation + simulation finale + éval test |
+| Lun 6 | ~1 050 | ~1 050 dev | Annotation toute la journée + simulation le soir |
+| Mar 7 | ~400 | ~1 460 dev | Fin annotation + kappa + simulation finale + ablations |
 
 Note : le split test (437) est déjà annoté. L'annotation dev est découplée de l'optimisation — on annote d'abord, on simule ensuite. Ablations triviales (rejouer avec différents B).
 
