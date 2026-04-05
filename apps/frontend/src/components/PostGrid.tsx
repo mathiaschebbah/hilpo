@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { fetchPostGrid, fetchCategories } from '@/lib/api'
+import { fetchPostGrid, fetchCategories, fetchVisualFormats } from '@/lib/api'
 
 type GridItem = {
   ig_media_id: string
@@ -36,11 +36,14 @@ export function PostGrid({ onOpenPost }: Props) {
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('')
   const [splitFilter, setSplitFilter] = useState<string>('')
+  const [formatFilter, setFormatFilter] = useState<string>('')
   const [categories, setCategories] = useState<Lookup[]>([])
+  const [visualFormats, setVisualFormats] = useState<Lookup[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetchCategories().then(setCategories)
+    fetchVisualFormats().then(setVisualFormats)
   }, [])
 
   useEffect(() => {
@@ -51,12 +54,13 @@ export function PostGrid({ onOpenPost }: Props) {
       status: statusFilter || undefined,
       category: categoryFilter || undefined,
       split: splitFilter || undefined,
+      visual_format: formatFilter || undefined,
     }).then(data => {
       setItems(data.items)
       setTotal(data.total)
       setLoading(false)
     })
-  }, [offset, statusFilter, categoryFilter, splitFilter])
+  }, [offset, statusFilter, categoryFilter, splitFilter, formatFilter])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
@@ -109,6 +113,22 @@ export function PostGrid({ onOpenPost }: Props) {
             <SelectItem value="all">Tous splits</SelectItem>
             <SelectItem value="test">Test</SelectItem>
             <SelectItem value="dev">Dev</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={formatFilter} onValueChange={v => {
+          const next = v ?? ''
+          setFormatFilter(next === 'all' ? '' : next)
+          setOffset(0)
+        }}>
+          <SelectTrigger className="w-48 h-8 text-xs">
+            {formatFilter || 'Tous formats'}
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous formats</SelectItem>
+            {visualFormats.map(vf => (
+              <SelectItem key={vf.id} value={vf.name}>{vf.name}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
 

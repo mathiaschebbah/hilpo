@@ -139,6 +139,7 @@ export async function fetchPostGrid(params: {
   status?: string
   category?: string
   split?: string
+  visual_format?: string
   annotator?: string
 } = {}): Promise<PostGridResponse> {
   const qs = new URLSearchParams()
@@ -147,6 +148,7 @@ export async function fetchPostGrid(params: {
   if (params.status) qs.set('status', params.status)
   if (params.category) qs.set('category', params.category)
   if (params.split) qs.set('split', params.split)
+  if (params.visual_format) qs.set('visual_format', params.visual_format)
   qs.set('annotator', params.annotator ?? 'mathias')
   return requestJson<PostGridResponse>(`/posts/?${qs}`)
 }

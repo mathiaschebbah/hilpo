@@ -108,7 +108,7 @@ class PostRepository:
     async def find_all_sample_posts(
         self, annotator: str, offset: int = 0, limit: int = 50,
         status: str | None = None, category: str | None = None,
-        split: str | None = None,
+        split: str | None = None, visual_format: str | None = None,
     ) -> tuple[list[dict], int]:
         where_clauses = []
         params: dict = {"annotator": annotator, "offset": offset, "limit": limit}
@@ -127,6 +127,10 @@ class PostRepository:
         if split:
             where_clauses.append("sp.split::text = :split")
             params["split"] = split
+
+        if visual_format:
+            where_clauses.append("COALESCE(avf.name, vf.name) = :visual_format")
+            params["visual_format"] = visual_format
 
         where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 

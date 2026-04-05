@@ -21,9 +21,10 @@ async def list_posts(
     status: str | None = None,
     category: str | None = None,
     split: str | None = None,
+    visual_format: str | None = None,
     service: PostService = Depends(get_service),
 ):
-    return await service.get_grid(annotator, offset, limit, status, category, split)
+    return await service.get_grid(annotator, offset, limit, status, category, split, visual_format)
 
 
 @router.get("/next", response_model=NextPostOut)

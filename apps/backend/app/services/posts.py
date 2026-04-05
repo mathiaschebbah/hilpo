@@ -81,9 +81,10 @@ class PostService:
     async def get_grid(
         self, annotator: str, offset: int, limit: int,
         status: str | None, category: str | None, split: str | None = None,
+        visual_format: str | None = None,
     ) -> PostGridPage:
         rows, total = await self.repository.find_all_sample_posts(
-            annotator, offset, limit, status, category, split,
+            annotator, offset, limit, status, category, split, visual_format,
         )
 
         # Signer toutes les thumbnails en parallèle (au lieu de séquentiellement)
