@@ -19,7 +19,7 @@ import json
 import logging
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from hilpo.config import MODEL_REWRITER
@@ -75,6 +75,15 @@ class MatchRecord:
     axis: str
     match: bool
     cursor: int
+
+
+@dataclass
+class DoubleEvalResult:
+    """Résultats détaillés de la double évaluation."""
+
+    incumbent_matches: list[bool] = field(default_factory=list)
+    candidate_matches: list[bool] = field(default_factory=list)
+    incumbent_records: list[MatchRecord] = field(default_factory=list)
 
 
 # ── Helpers BDD ───────────────────────────────────────────────
@@ -225,7 +234,8 @@ def classify_and_store(
             errors.append(ErrorCase(
                 ig_media_id=pred.ig_media_id,
                 axis=axis,
-                scope=scope if axis == "visual_format" else None,
+                prompt_scope=scope if axis == "visual_format" else None,
+                post_scope=scope,
                 predicted=predicted,
                 expected=expected,
                 features_json=pred.features.model_dump_json(indent=2),
@@ -285,10 +295,86 @@ def pick_rewrite_target(
 ) -> tuple[str, str | None]:
     """Choisit (agent, scope) avec le plus d'erreurs dans le buffer."""
     counts: Counter[tuple[str, str | None]] = Counter()
+    grouped_by_post: dict[tuple[int, str], list[ErrorCase]] = defaultdict(list)
+
     for e in error_buffer:
-        key = (e.axis, e.scope)
-        counts[key] += 1
+        counts[(e.axis, e.prompt_scope)] += 1
+        grouped_by_post[(e.ig_media_id, e.post_scope)].append(e)
+
+    # Le descripteur n'a pas de label GT propre. On ne le cible que quand
+    # plusieurs axes échouent sur un même post, signal d'un problème amont.
+    for (_, scope), grouped_errors in grouped_by_post.items():
+        if len(grouped_errors) >= 2:
+            counts[("descriptor", scope)] += len(grouped_errors)
+
     return counts.most_common(1)[0][0]
+
+
+def get_target_errors(
+    error_buffer: list[ErrorCase],
+    target_agent: str,
+    target_scope: str | None,
+) -> list[ErrorCase]:
+    """Filtre les erreurs pertinentes pour la cible du rewrite."""
+    if target_agent != "descriptor":
+        return [
+            e for e in error_buffer
+            if e.axis == target_agent and e.prompt_scope == target_scope
+        ]
+
+    grouped_by_post: dict[int, list[ErrorCase]] = defaultdict(list)
+    for error in error_buffer:
+        if error.post_scope == target_scope:
+            grouped_by_post[error.ig_media_id].append(error)
+
+    target_errors: list[ErrorCase] = []
+    for grouped_errors in grouped_by_post.values():
+        if len(grouped_errors) >= 2:
+            target_errors.extend(grouped_errors)
+    return target_errors
+
+
+def _store_eval_predictions_for_target(
+    conn,
+    post_id: int,
+    prompt_version_id: int,
+    target_agent: str,
+    prediction,
+    run_id: int,
+) -> None:
+    """Persiste les prédictions utiles à l'audit du prompt évalué."""
+    if target_agent == "descriptor":
+        # Le descripteur n'a pas de label GT propre. On journalise donc l'effet
+        # downstream de ce prompt sur les 3 axes supervisés.
+        for axis in ("category", "visual_format", "strategy"):
+            store_prediction(
+                conn,
+                post_id,
+                axis,
+                prompt_version_id,
+                getattr(prediction, axis),
+                simulation_run_id=run_id,
+            )
+        return
+
+    store_prediction(
+        conn,
+        post_id,
+        target_agent,
+        prompt_version_id,
+        getattr(prediction, target_agent),
+        simulation_run_id=run_id,
+    )
+
+
+def _target_metric_matches(result: PipelineResult, annotation: dict, target_agent: str) -> list[bool]:
+    """Retourne les matches pris en compte pour la promotion."""
+    if target_agent == "descriptor":
+        return [
+            getattr(result.prediction, axis) == annotation[axis]
+            for axis in ("category", "visual_format", "strategy")
+        ]
+    return [getattr(result.prediction, target_agent) == annotation[target_agent]]
 
 
 # ── Double évaluation ─────────────────────────────────────────
@@ -297,6 +383,7 @@ def pick_rewrite_target(
 def double_evaluate(
     eval_posts: list[PostInput],
     annotations: dict[int, dict],
+    start_cursor: int,
     prompt_state: PromptState,
     target_agent: str,
     target_scope: str | None,
@@ -305,15 +392,15 @@ def double_evaluate(
     conn,
     run_id: int,
     labels_by_scope: dict[str, dict[str, list[str]]],
-) -> tuple[list[bool], list[bool]]:
+) -> DoubleEvalResult:
     """Évalue incumbent vs candidate sur les eval_posts.
 
-    Retourne (incumbent_matches, candidate_matches) pour l'axe ciblé.
+    Retourne les matches utilisés pour la promotion et les matches incumbent
+    à réinjecter dans les métriques finales de la simulation.
     """
-    incumbent_matches: list[bool] = []
-    candidate_matches: list[bool] = []
+    result = DoubleEvalResult()
 
-    for post in eval_posts:
+    for offset, post in enumerate(eval_posts):
         annotation = annotations.get(post.ig_media_id)
         if not annotation:
             continue
@@ -335,12 +422,27 @@ def double_evaluate(
             store_prediction(conn, post.ig_media_id, axis, pid,
                              getattr(result_inc.prediction, axis),
                              simulation_run_id=run_id)
+            result.incumbent_records.append(MatchRecord(
+                axis=axis,
+                match=getattr(result_inc.prediction, axis) == annotation[axis],
+                cursor=start_cursor + offset,
+            ))
         for call in result_inc.api_calls:
             scope_key = scope if call.agent in ("descriptor", "visual_format") else None
             pid = prompt_state.db_ids.get((call.agent, scope_key)) or prompt_state.db_ids.get((call.agent, None))
             store_api_call(conn, "evaluation", call.agent, call.model, pid,
                            post.ig_media_id, call.input_tokens, call.output_tokens,
                            None, call.latency_ms, run_id)
+
+        if target_agent == "descriptor":
+            _store_eval_predictions_for_target(
+                conn=conn,
+                post_id=post.ig_media_id,
+                prompt_version_id=prompt_state.db_ids[(target_agent, target_scope)],
+                target_agent=target_agent,
+                prediction=result_inc.prediction,
+                run_id=run_id,
+            )
 
         # ── Candidate ──
         # Construire le PromptSet avec les instructions candidate pour la cible
@@ -351,12 +453,12 @@ def double_evaluate(
         )
         prompts_cand = build_prompts_from_state(candidate_state, conn, scope)
 
-        # Si la cible est un classifieur et le scope ne matche pas, skip candidate
+        # Si la cible est scopée et le scope ne matche pas, skip candidate
         if target_scope is not None and scope != target_scope:
             # Même résultat que incumbent (le candidate ne change rien pour ce scope)
-            inc_val = getattr(result_inc.prediction, target_agent)
-            incumbent_matches.append(inc_val == annotation[target_agent])
-            candidate_matches.append(inc_val == annotation[target_agent])
+            metric_matches = _target_metric_matches(result_inc, annotation, target_agent)
+            result.incumbent_matches.extend(metric_matches)
+            result.candidate_matches.extend(metric_matches)
             continue
 
         result_cand = classify_post(
@@ -372,13 +474,19 @@ def double_evaluate(
                            post.ig_media_id, call.input_tokens, call.output_tokens,
                            None, call.latency_ms, run_id)
 
-        # Comparer sur l'axe ciblé uniquement
-        inc_val = getattr(result_inc.prediction, target_agent)
-        cand_val = getattr(result_cand.prediction, target_agent)
-        incumbent_matches.append(inc_val == annotation[target_agent])
-        candidate_matches.append(cand_val == annotation[target_agent])
+        _store_eval_predictions_for_target(
+            conn=conn,
+            post_id=post.ig_media_id,
+            prompt_version_id=candidate_db_id,
+            target_agent=target_agent,
+            prediction=result_cand.prediction,
+            run_id=run_id,
+        )
 
-    return incumbent_matches, candidate_matches
+        result.incumbent_matches.extend(_target_metric_matches(result_inc, annotation, target_agent))
+        result.candidate_matches.extend(_target_metric_matches(result_cand, annotation, target_agent))
+
+    return result
 
 
 # ── Display ───────────────────────────────────────────────────
@@ -579,7 +687,13 @@ def main():
             and len(error_buffer) >= args.batch_size
         ):
             target_agent, target_scope = pick_rewrite_target(error_buffer)
-            target_errors = [e for e in error_buffer if e.axis == target_agent and e.scope == target_scope]
+            target_errors = get_target_errors(error_buffer, target_agent, target_scope)
+
+            if not target_errors:
+                log.warning("[REWRITE] Aucune erreur exploitable pour %s/%s. Buffer reset.",
+                            target_agent, target_scope or "all")
+                error_buffer.clear()
+                continue
 
             rewrite_count += 1
             print()  # newline après la progress bar
@@ -589,7 +703,7 @@ def main():
             # Descriptions pour le scope de la cible
             effective_scope = target_scope or "FEED"  # fallback pour category/strategy
             all_descs = format_descriptions(
-                load_visual_formats(conn, effective_scope) if target_agent == "visual_format"
+                load_visual_formats(conn, effective_scope) if target_agent in ("visual_format", "descriptor")
                 else load_categories(conn) if target_agent == "category"
                 else load_strategies(conn)
             )
@@ -598,6 +712,8 @@ def main():
             log.info("[REWRITE #%d] Appel rewriter (%s)...", rewrite_count, args.rewriter_model)
             current_key = (target_agent, target_scope)
             rewrite_result = rewrite_prompt(
+                target_agent=target_agent,
+                target_scope=target_scope,
                 current_instructions=prompt_state.instructions[current_key],
                 errors=target_errors,
                 all_descriptions=all_descs,
@@ -634,15 +750,15 @@ def main():
                 error_buffer.clear()
                 continue
 
-            incumbent_matches, candidate_matches = double_evaluate(
-                eval_posts, annotations, prompt_state,
+            double_eval_result = double_evaluate(
+                eval_posts, annotations, cursor, prompt_state,
                 target_agent, target_scope,
                 rewrite_result.new_instructions, candidate_id,
                 conn, run_id, labels_by_scope,
             )
 
-            inc_acc = accuracy(incumbent_matches)
-            cand_acc = accuracy(candidate_matches)
+            inc_acc = accuracy(double_eval_result.incumbent_matches)
+            cand_acc = accuracy(double_eval_result.candidate_matches)
             delta_actual = cand_acc - inc_acc
 
             # Compter les api calls de l'évaluation
@@ -658,8 +774,13 @@ def main():
                 conn,
                 prompt_before_id=prompt_state.db_ids[current_key],
                 prompt_after_id=candidate_id,
-                error_batch=[{"predicted": e.predicted, "expected": e.expected,
-                              "ig_media_id": e.ig_media_id} for e in target_errors],
+                error_batch=[{
+                    "axis": e.axis,
+                    "predicted": e.predicted,
+                    "expected": e.expected,
+                    "ig_media_id": e.ig_media_id,
+                    "post_scope": e.post_scope,
+                } for e in target_errors],
                 rewriter_reasoning=rewrite_result.reasoning,
                 accepted=promoted,
                 simulation_run_id=run_id,
@@ -693,9 +814,13 @@ def main():
                          rewrite_count, consecutive_failures, args.patience)
 
             # Avancer le curseur au-delà de la fenêtre d'évaluation
-            # Les posts eval sont déjà classifiés et stockés par double_evaluate.
-            # On les compte dans n_processed mais pas dans matches_by_axis
-            # (la DB a les données complètes pour les métriques finales).
+            # Les posts eval comptent dans la métrique finale via l'incumbent,
+            # car ce sont les prédictions effectivement "vécues" pendant la simu.
+            for match_record in double_eval_result.incumbent_records:
+                all_matches.append(match_record)
+                if match_record.match:
+                    matches_by_axis[match_record.axis] += 1
+
             n_processed += len(eval_posts)
             cursor = eval_end
 

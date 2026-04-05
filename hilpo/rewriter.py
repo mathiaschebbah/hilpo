@@ -12,10 +12,10 @@ from hilpo.client import get_client
 from hilpo.config import MODEL_REWRITER
 
 REWRITER_SYSTEM = """\
-Tu es un ingénieur prompt expert en classification de contenus Instagram.
+Tu es un ingénieur prompt expert du pipeline de classification de contenus Instagram.
 
 Tu reçois :
-1. Les **instructions actuelles** d'un agent de classification (la partie optimisable du prompt)
+1. Les **instructions actuelles** d'un agent du pipeline (descripteur multimodal ou agent de classification)
 2. Un **batch d'erreurs** : pour chaque erreur, le label prédit, le label attendu (annotation humaine), les features visuelles extraites, la caption, et les descriptions taxonomiques des deux labels
 3. Les **descriptions taxonomiques complètes** de tous les labels du scope
 
@@ -23,8 +23,8 @@ Tu reçois :
 
 Analyse les patterns d'erreur dans le batch et réécris les instructions pour corriger ces erreurs. Tu dois :
 
-1. **Diagnostiquer** : quelles règles ou heuristiques dans les instructions actuelles causent les erreurs ? Quels patterns visuels/textuels sont mal interprétés ?
-2. **Corriger** : modifier les règles de décision, ajouter des cas spécifiques, clarifier les frontières entre labels confondus
+1. **Diagnostiquer** : quelles règles ou heuristiques dans les instructions actuelles causent les erreurs ? Quels patterns visuels/textuels sont mal interprétés ou mal extraits ?
+2. **Corriger** : modifier les règles de décision ou d'extraction, ajouter des cas spécifiques, clarifier les frontières entre labels confondus
 3. **Préserver** : ne pas casser ce qui fonctionne. Les instructions doivent rester cohérentes et complètes.
 
 ## Contraintes
@@ -43,7 +43,8 @@ class ErrorCase:
 
     ig_media_id: int
     axis: str
-    scope: str | None
+    prompt_scope: str | None
+    post_scope: str
     predicted: str
     expected: str
     features_json: str
@@ -71,6 +72,8 @@ def _format_error_batch(errors: list[ErrorCase]) -> str:
     lines = []
     for i, e in enumerate(errors, 1):
         lines.append(f"### Erreur {i}")
+        lines.append(f"- **Axe concerné** : `{e.axis}`")
+        lines.append(f"- **Scope du post** : `{e.post_scope}`")
         lines.append(f"- **Prédit** : `{e.predicted}`")
         lines.append(f"- **Attendu** : `{e.expected}`")
         lines.append(f"- **Caption** : {(e.caption or '(vide)')[:300]}")
@@ -82,6 +85,8 @@ def _format_error_batch(errors: list[ErrorCase]) -> str:
 
 
 def rewrite_prompt(
+    target_agent: str,
+    target_scope: str | None,
     current_instructions: str,
     errors: list[ErrorCase],
     all_descriptions: str,
@@ -103,7 +108,13 @@ def rewrite_prompt(
     if client is None:
         client = get_client()
 
-    user_content = f"""## Instructions actuelles
+    target_label = f"{target_agent}/{target_scope}" if target_scope else f"{target_agent}/all"
+
+    user_content = f"""## Cible du rewrite
+
+{target_label}
+
+## Instructions actuelles
 
 ```
 {current_instructions}
@@ -139,8 +150,8 @@ Analyse les erreurs et propose des instructions améliorées. Retourne un JSON a
     return RewriteResult(
         new_instructions=parsed.get("new_instructions", current_instructions),
         reasoning=parsed.get("reasoning", ""),
-        target_agent=errors[0].axis if errors else "unknown",
-        target_scope=errors[0].scope if errors else None,
+        target_agent=target_agent,
+        target_scope=target_scope,
         model=model,
         input_tokens=response.usage.prompt_tokens if response.usage else 0,
         output_tokens=response.usage.completion_tokens if response.usage else 0,
