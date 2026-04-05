@@ -10,7 +10,7 @@ Ce guide permet de reproduire l'intégralité des résultats du mémoire à part
 | Python | 3.12 | via pyenv ou [python.org](https://www.python.org/) |
 | uv | 0.7+ | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Node.js | 22+ | via nvm ou [nodejs.org](https://nodejs.org/) |
-| Clé API | Qwen 3.5 | Variable d'environnement `HILPO_MODEL_API_KEY` |
+| Clé API | OpenRouter | Variable d'environnement `OPENROUTER_API_KEY` |
 
 ## 1. Cloner et installer
 
@@ -75,7 +75,7 @@ Le script :
 - Importe les 21 425 posts, 19 353 labels, 84 019 médias
 - Crée les lookup tables (15 catégories, 44 formats visuels)
 - Échantillonne 2 000 posts stratifiés sur `visual_format × strategy`
-- Sépare en dev (1 600) / test (400) avec ratio 80/20
+- Sépare en dev (1 563) / test (437) stratifié sur `media_product_type`
 - Fixe l'ordre de présentation (seed PostgreSQL `setseed(0.42)`)
 
 **Seed** : le script appelle `setseed(0.42)` en début de session PostgreSQL. Toutes les opérations `RANDOM()` qui suivent (échantillonnage, splits, ordre) sont déterministes dans une même session.
@@ -108,37 +108,59 @@ Ouvrir http://localhost:5173. L'API est proxifiée automatiquement vers le backe
 
 Les annotations humaines sont stockées dans la table `annotations`. Pour une reproduction complète, l'annotateur re-swipe les 2 000 posts via l'interface. Pour une vérification, un dump SQL des annotations est fourni sur demande.
 
-### Phase 2 — Baseline zero-shot
+### Phase 2 — Baseline zero-shot (B0)
 
 ```bash
-uv run python scripts/run_baseline.py --seeds 1,2,3,4,5
+.venv/bin/python scripts/run_baseline.py
 ```
 
-### Phase 3 — Boucle HILPO
+Évalue le prompt v0 sur les 437 posts test. Résultat stocké dans `simulation_runs`.
+
+### Phase 3 — Simulation HILPO
 
 ```bash
-uv run python scripts/run_hilpo.py --seeds 1,2,3,4,5 --batch-size 30
+.venv/bin/python scripts/run_simulation.py --batch-size 30
 ```
+
+Rejoue les annotations dev dans l'ordre de présentation. Le prompt évolue via le rewriter (protocole prequential). Résultat stocké dans `simulation_runs`.
+
+### Ablations
+
+```bash
+.venv/bin/python scripts/run_simulation.py --batch-size 1
+.venv/bin/python scripts/run_simulation.py --batch-size 10
+.venv/bin/python scripts/run_simulation.py --batch-size 50
+```
+
+Même annotations, même ordre — seul le batch size change.
+
+### Évaluation finale (BN)
+
+```bash
+.venv/bin/python scripts/run_baseline.py --prompt-version N
+```
+
+Évalue le prompt vN (dernier actif après convergence) sur les 437 posts test.
 
 ### Métriques et figures
 
 ```bash
-uv run python scripts/metrics.py --output results/
-uv run python scripts/figures.py --input results/ --output figures/
+.venv/bin/python scripts/metrics.py --output results/
+.venv/bin/python scripts/figures.py --input results/ --output figures/
 ```
 
 **Figures générées :**
-1. `convergence.pdf` — F1 macro vs nombre d'annotations (dev + test)
-2. `comparison.pdf` — Tableau de comparaison B0, B2, HILPO (F1 macro ± std, p-values McNemar)
+1. `convergence.pdf` — accuracy en rolling window vs posts traités (dev), rewrites annotés
+2. `comparison.pdf` — Tableau B0 vs HILPO vN (accuracy, F1 macro, p-value McNemar)
 3. `ablation_batch.pdf` — Effet du batch size (B=1, 10, 30, 50)
-4. `confusion_matrix.pdf` — Matrice de confusion visual_format avant/après
+4. `confusion_matrix.pdf` — Matrice de confusion visual_format v0 vs vN
 
 ## 8. Vérification
 
 | Vérification | Commande |
 |-------------|----------|
 | Nombre de posts importés | `psql -h localhost -p 5433 -U hilpo -d hilpo -c "SELECT COUNT(*) FROM sample_posts"` → 2 000 |
-| Splits dev/test | `... -c "SELECT split, COUNT(*) FROM sample_posts GROUP BY split"` → dev 1600, test 400 |
+| Splits dev/test | `... -c "SELECT split, COUNT(*) FROM sample_posts GROUP BY split"` → dev 1563, test 437 |
 | Seed stockée | `... -c "SELECT DISTINCT seed FROM sample_posts"` → 42 |
 | Annotations existantes | `... -c "SELECT COUNT(*) FROM annotations"` |
 | Prompts versionnés | `... -c "SELECT agent, scope, version, status FROM prompt_versions ORDER BY agent, version"` |
@@ -179,7 +201,7 @@ hilpo/
 | Mécanisme | Implémentation |
 |-----------|---------------|
 | **Seeds fixées** | `setseed(0.42)` dans import, `sample_posts.seed` en BDD |
-| **5 splits indépendants** | Seeds 1-5 pour moyennes ± écart-type |
+| **Simulation rejouable** | Même annotations, même ordre → résultats déterministes |
 | **Prompt versionné** | `prompt_versions.content` stocke le texte intégral, parent_id trace l'historique |
 | **Match auto-calculé** | Trigger `trg_prediction_match` compare prédiction vs annotation |
 | **Traçabilité API** | `api_calls` : tokens, coût, latence, agent, prompt_version par appel |

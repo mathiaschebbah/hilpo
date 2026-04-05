@@ -9,22 +9,23 @@ Par axe (visual_format, catégorie, stratégie) et global (3 axes corrects simul
 - Matrice de confusion
 - Cohen's kappa (accord modèle/humain)
 
-Tous rapportés en moyenne ± écart-type sur 5 splits.
+Rapportés sur 1 run principal (contrainte de coût API). La variance est adressée via les ablations (B=1, 10, 30, 50) qui rejouent la simulation sur les mêmes annotations.
 
 ## Significativité statistique
 
-- Test de McNemar (paire par paire) entre chaque méthode sur chaque split
-- p-values rapportées, seuil alpha = 0.05 avec correction de Bonferroni
+- Test de McNemar (paire par paire) entre B0 et HILPO vN sur le test set
+- p-values rapportées, seuil alpha = 0.05
 
 ## Protocole B0 → HILPO → BN
 
 Le protocole repose sur la comparaison de deux runs sur le **même test set** (437 posts) :
 
-1. **B0** (fait) : prompt v0 (écrit à la main) évalué sur test → accuracy baseline
-2. **Boucle HILPO** : l'humain annote le dev (~1560 posts) avec la boucle live. Le prompt évolue v0 → v1 → v2 → ... → vN via le rewriter.
-3. **BN** : prompt vN (dernier prompt actif) évalué sur test → accuracy finale
+1. **Annotation** : l'humain annote le dev (~1560 posts) en aveugle (sans voir les prédictions)
+2. **B0** (fait) : prompt v0 (écrit à la main) évalué sur test → accuracy baseline
+3. **Simulation HILPO** : replay séquentiel des annotations dev dans l'ordre de présentation. Protocole prequential : le prompt évolue v0 → v1 → ... → vN via le rewriter (B=30, delta=2%, patience=3).
+4. **BN** : prompt vN (dernier prompt actif après convergence) évalué sur test → accuracy finale
 
-La différence BN − B0 est directement attribuable à HILPO. Même test set, même pipeline, même descripteur, mêmes descriptions taxonomiques Δ^m — seules les instructions I_t changent.
+La différence BN - B0 est directement attribuable à HILPO. Même test set, même pipeline, même descripteur, mêmes descriptions taxonomiques — seules les instructions I_t changent.
 
 Chaque run est stocké dans `simulation_runs` avec sa config, ses métriques, et son coût. Reproductible.
 

@@ -2,7 +2,7 @@
 
 Mémoire de fin d'études de Mathias Chebbah (Master 1 MIAGE, Université Paris Dauphine), en alternance chez Views (média gen-z).
 
-Système d'annotation agentique pour classifier des posts Instagram via une boucle humain-dans-la-boucle qui optimise itérativement le prompt du classificateur. Le système remplace une heuristique de classification v0 (imprécise) par une pipeline performante, applicable en production chez Views.
+Système d'annotation agentique pour classifier des posts Instagram via une boucle humain-dans-la-boucle qui optimise itérativement le prompt du classificateur. L'humain annote d'abord, puis un script simule la boucle d'optimisation (protocole prequential). Le système remplace une heuristique de classification v0 (imprécise) par une pipeline performante, applicable en production chez Views.
 
 ## Problématique
 
@@ -20,7 +20,7 @@ HILPO se distingue des travaux existants sur **quatre axes** :
 
 1. **L'humain annote les données, pas le prompt.** Contrairement à iPrOp (Li & Klinger, 2025) où l'humain choisit entre des prompts candidats, dans HILPO l'humain corrige les classifications. Le signal d'erreur est plus fin : correction instance-par-instance, pas choix global entre instructions.
 
-2. **Domaine multimodal à taxonomie subjective.** Les 44 formats visuels et 15 catégories éditoriales de Views sont des classes définies par un média, pas par un benchmark académique. La taxonomie est instable, culturellement située — un terrain où l'oracle humain est plus précieux que les métriques automatiques.
+2. **Domaine multimodal à taxonomie subjective.** Les 68 formats visuels (44 FEED + 16 REELS + 8 STORY) et 15 catégories éditoriales de Views sont des classes définies par un média, pas par un benchmark académique. La taxonomie est instable, culturellement située — un terrain où l'oracle humain est plus précieux que les métriques automatiques.
 
 3. **Le prompt est l'artefact final, avec séparation explicite.** Le prompt HILPO est composé de deux blocs : les descriptions taxonomiques (rédigées par l'expert métier, fixes) et les instructions de classification (optimisées par la boucle). Contrairement au fine-tuning, l'artefact est lisible, auditable et transférable. On peut analyser précisément ce que la boucle a appris (instructions) vs ce que l'humain savait déjà (descriptions).
 
