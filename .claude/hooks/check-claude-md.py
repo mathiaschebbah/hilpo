@@ -21,11 +21,12 @@ def main():
         print(json.dumps({}))
         return
 
-    message = """**Rappel : vérifie si CLAUDE.md doit être mis à jour.**
+    message = """**Rappel : vérifie si CLAUDE.md et docs/ doivent être mis à jour.**
 
-1. Revois ce qui a été fait (fichiers créés/modifiés, décisions prises, stack changée, phase avancée).
-2. Utilise AskUserQuestion pour confirmer les changements à inclure (toujours proposer "Rien à mettre à jour").
-3. Si confirmé : incrémente la version, ajoute au changelog, commit séparé avec `docs: update CLAUDE.md`."""
+1. Revois ce qui a été fait (fichiers créés/modifiés, décisions prises, stack changée, schéma évolué, phase avancée).
+2. Vérifie si les fichiers dans `docs/` concernés doivent être mis à jour (architecture.md, phases.md, evaluation.md, schema.md, stack.md, data.md, planning.md, etc.).
+3. Utilise AskUserQuestion pour confirmer les changements à inclure (toujours proposer "Rien à mettre à jour").
+4. Si confirmé : mets à jour les docs/ concernés, incrémente la version CLAUDE.md, ajoute au changelog, commit séparé avec `docs: update CLAUDE.md`."""
 
     print(json.dumps({
         "hookSpecificOutput": {
