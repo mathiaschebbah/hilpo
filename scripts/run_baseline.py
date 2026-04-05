@@ -85,11 +85,38 @@ def finish_run(conn, run_id: int, metrics: dict):
     conn.commit()
 
 
-def get_prompt_ids(conn) -> dict[tuple[str, str | None], int]:
-    rows = conn.execute(
-        "SELECT id, agent::text, scope::text FROM prompt_versions WHERE status = 'active'"
+def ensure_prompts_v0(conn) -> dict[tuple[str, str | None], int]:
+    """Insère les prompts v0 s'ils n'existent pas, retourne le mapping (agent, scope) → id."""
+    existing = conn.execute(
+        "SELECT id, agent::text, scope::text, content FROM prompt_versions WHERE version = 0"
     ).fetchall()
-    return {(r["agent"], r["scope"]): r["id"] for r in rows}
+    existing_map = {(r["agent"], r["scope"]): r for r in existing}
+
+    ids: dict[tuple[str, str | None], int] = {}
+    for (agent, scope), content in PROMPTS_V0.items():
+        key = (agent, scope)
+        if key in existing_map:
+            row = existing_map[key]
+            if row["content"] != content:
+                conn.execute(
+                    "UPDATE prompt_versions SET content = %s WHERE id = %s",
+                    (content, row["id"]),
+                )
+                log.info("  prompt v0 mis à jour : %s/%s", agent, scope or "all")
+            ids[key] = row["id"]
+        else:
+            row = conn.execute(
+                """
+                INSERT INTO prompt_versions (agent, scope, version, content, status)
+                VALUES (%s, %s, 0, %s, 'active')
+                RETURNING id
+                """,
+                (agent, scope, content),
+            ).fetchone()
+            ids[key] = row["id"]
+            log.info("  prompt v0 inséré : %s/%s (id=%d)", agent, scope or "all", row["id"])
+    conn.commit()
+    return ids
 
 
 def build_prompts(conn, scope: str) -> PromptSet:
@@ -284,7 +311,7 @@ async def main():
 
     # 6. Stockage BDD
     log.info("Stockage en BDD...")
-    prompt_ids = get_prompt_ids(conn)
+    prompt_ids = ensure_prompts_v0(conn)
     matches, total_api = store_results(conn, results, post_inputs, prompt_ids, run_id)
 
     # 7. Métriques
