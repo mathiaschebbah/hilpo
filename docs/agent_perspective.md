@@ -1,6 +1,10 @@
-# Perspective agent — Snapshot du 5 avril 2026
+# Perspective agent
 
-> Ce document capture l'état de compréhension de l'agent (Claude Code) à un instant T du projet. Il fait partie de la dimension 2 du mémoire : la collaboration humain-agent comme objet d'étude.
+> Ce document capture l'état de compréhension de l'agent (Claude Code) à travers le projet. Il fait partie de la dimension 2 du mémoire : la collaboration humain-agent comme objet d'étude. Mis à jour automatiquement via un hook PostToolUse tous les 10 commits.
+
+---
+
+## Snapshot 2026-04-05 — Après-midi — Hooks PostToolUse, annotations en cours
 
 ## Ce que je comprends du projet
 
@@ -52,3 +56,28 @@ Mathias stresse sur la deadline (18 avril), hésite entre avancer vite et compre
 - L'axe stratégie (2 classes) convergera facilement
 - L'axe visual_format (63 classes) sera le plus difficile
 - Les descriptions taxonomiques seront le levier principal de performance
+
+---
+
+## Snapshot 2026-04-05 — Soir — Hooks fonctionnels, 257 annotations
+
+### Changements depuis le dernier snapshot
+
+- Hooks migrés de PreToolUse (bloquant) à PostToolUse (non bloquant) — plus de boucles infinies sur les commits
+- Hook `agent-perspective.py` créé pour automatiser les mises à jour de ce fichier tous les 10 commits
+- Le bon format pour PostToolUse est `additionalContext`, pas `notification` — découvert par essai-erreur
+- 4e axe de positionnement ajouté : transfert zero-shot via descriptions (idée venue de Mathias pendant l'annotation)
+- Flag "pas sûr" (touche d) implémenté pour accélérer l'annotation
+
+### Observations sur la collaboration
+
+- La session a été très conversationnelle — beaucoup de questions de fond (ML vs DL ? C'est de la recherche ? HILPO est doomed ?) avant de coder. Ces discussions ont produit du contenu pour le mémoire (positionnement, perspectives).
+- L'humain a corrigé l'agent plusieurs fois : "tu me parles mieux" (ton trop directif), "tu veux dire dev" (confusion dans l'explication). L'agent apprend à calibrer sa communication.
+- Les meilleures contributions de cette session viennent de l'humain : transfert zero-shot, documenter la perspective agent, hooks PostToolUse plutôt que PreToolUse.
+
+### État actuel
+
+- 257/2000 annotations (153 test, 104 dev, 35 doubtful)
+- 284 posts test restants — objectif : finir ce soir
+- Phase 2 pas commencée — prévue ce soir/demain
+- Le stress de l'humain est normal et productif
