@@ -123,7 +123,7 @@ Note : le split test (437) est déjà annoté. L'annotation dev est découplée 
 | Poste | Appels |
 |-------|--------|
 | B0 baseline test (437 posts) | ~1 750 |
-| Classification live dev (~1 560 posts) | ~6 240 |
+| Simulation dev (~1 560 posts) | ~6 240 |
 | Rewriter (~50 triggers) | ~50 |
 | Éval finale (test × vN) | ~1 750 |
 | Simulations + ablations | ~3 000 |

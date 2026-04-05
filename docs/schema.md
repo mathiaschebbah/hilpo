@@ -22,7 +22,7 @@ Fichiers :
 | `predictions` | Prédictions par agent + match auto-calculé par trigger |
 | `rewrite_logs` | Historique des réécritures de prompt (avant/après, raisonnement) |
 | `api_calls` | Traçabilité complète des appels API (tokens, coût, latence) |
-| `simulation_runs` | Runs de simulation (Phase D) avec config, résultats, coûts |
+| `simulation_runs` | Runs de baseline et de simulation HILPO offline avec config, résultats, coûts |
 | `prompt_metrics` | Vue — accuracy agrégée par version de prompt × agent × simulation |
 
 ## Descriptions taxonomie
@@ -33,8 +33,8 @@ Les trois tables de lookup (`visual_formats`, `categories`, `strategies`) ont un
 
 - `sample_posts.presentation_order` — ordre de présentation déterministe (shuffled avec seed), plus de RANDOM()
 - `sample_posts.split` — dev (1563) / test (437), stratifié sur visual_format × strategy
-- `predictions.simulation_run_id` — distingue live (NULL) des simulations multi-splits
-- `api_calls.simulation_run_id` — idem pour la traçabilité des coûts
+- `predictions.simulation_run_id` — distingue les runs reproductibles (baseline, simulation) des prédictions ad hoc (`NULL`)
+- `api_calls.simulation_run_id` — idem pour distinguer les runs reproductibles des appels ad hoc
 
 ## Match auto-calculé
 

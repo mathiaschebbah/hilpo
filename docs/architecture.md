@@ -154,10 +154,10 @@ L'annotation et l'optimisation sont **découplées** :
 1. **Annotation** : l'humain annote tous les posts dev via l'interface de swipe (rapide, pas d'attente modèle)
 2. **Simulation** : un script rejoue les annotations dans l'ordre de présentation (seed=42) et simule la boucle HILPO
 
-Ce découplage est mathématiquement équivalent au live car :
+Sous les hypothèses du protocole, ce découplage est opérationnellement équivalent au live car :
 - Les annotations sont déterministes (déjà faites)
 - L'ordre de présentation est fixé (seed=42)
-- Le modèle est quasi-déterministe (temperature=0.1)
+- Le modèle est suffisamment stable pour que les variations stochastiques restent limitées (temperature=0.1)
 - Le prompt évolue de la même façon
 
 **Avantage** : les ablations sont triviales — on rejoue la simulation avec B=1, 10, 30, 50 sans ré-annoter.
@@ -194,7 +194,7 @@ Le script de simulation parcourt les posts dev dans l'ordre de présentation. Le
 
 #### Nombre de rewrites estimé (basé sur B0)
 
-| Axe | Taux d'erreur B0 | Rewrites estimés (1560 posts) |
+| Axe | Taux d'erreur B0 | Rewrites estimés (1563 posts) |
 |-----|-------------------|-------------------------------|
 | visual_format | ~36% | ~19 |
 | catégorie | ~13% | ~6 |
@@ -212,7 +212,7 @@ Note : le rewriter peut optimiser le prompt du descripteur ET des classifieurs (
 
 - **Dépendance au chemin** : l'ordre de présentation (seed=42) influence quels posts tombent dans quel batch. Un autre seed donnerait une trajectoire différente.
 - **Variance** : un seul run, pas de moyenne sur 5 splits (contrainte de coût API). À compenser par les ablations.
-- **Pas de validation fixe** : pas de dev_val séparé. La séparation temporelle (prequential) joue ce rôle. Le test reste strictement untouched.
+- **Pas de validation fixe** : pas de dev_val séparé. La séparation temporelle (prequential) joue ce rôle. Le test reste strictement non utilisé avant l'évaluation finale.
 - **Prequential, pas iid** : le protocole assume un ordre séquentiel, pas un échantillonnage iid. À présenter comme tel.
 
 ## Séparation backend / engine
@@ -291,7 +291,7 @@ Pour chaque post x_i dans l'ordre de presentation :
 Retourner I_t
 ```
 
-Note : les annotations h(x_i) sont pre-existantes. La simulation est mathematiquement equivalente au live car l'humain annote en aveugle (sans voir la prediction du modele).
+Note : les annotations h(x_i) sont pré-existantes. La simulation est conçue pour reproduire le comportement du live dans notre protocole, l'humain annotant en aveugle (sans voir la prédiction du modèle).
 
 ### Propriétés à analyser
 

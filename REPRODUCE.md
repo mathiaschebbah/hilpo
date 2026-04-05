@@ -1,6 +1,6 @@
 # Reproduire les résultats de HILPO
 
-Ce guide permet de reproduire l'intégralité des résultats du mémoire à partir du code source et des données.
+Ce guide permet de reproduire l'état actuel des résultats disponibles dans le dépôt et de documenter le protocole expérimental visé pour la Phase 3.
 
 ## Prérequis
 
@@ -17,6 +17,7 @@ Ce guide permet de reproduire l'intégralité des résultats du mémoire à part
 ```bash
 git clone https://github.com/mathiaschebbah/hilpo.git
 cd hilpo
+uv sync
 ```
 
 ## 2. Données
@@ -73,7 +74,7 @@ uv run python ../../scripts/import_csv.py
 
 Le script :
 - Importe les 21 425 posts, 19 353 labels, 84 019 médias
-- Crée les lookup tables (15 catégories, 44 formats visuels)
+- Peuple les lookups (15 catégories, 68 formats visuels ; table `strategies` via migration)
 - Échantillonne 2 000 posts stratifiés sur `visual_format × strategy`
 - Sépare en dev (1 563) / test (437) stratifié sur `media_product_type`
 - Fixe l'ordre de présentation (seed PostgreSQL `setseed(0.42)`)
@@ -104,6 +105,8 @@ Ouvrir http://localhost:5173. L'API est proxifiée automatiquement vers le backe
 
 ## 7. Reproduire les expériences
 
+À l'état actuel du dépôt, l'import, l'annotation et la baseline B0 sont directement rejouables. La simulation HILPO, les métriques agrégées et les figures sont documentées ci-dessous comme interface cible, mais les scripts correspondants ne sont pas encore présents dans la repo au 5 avril 2026.
+
 ### Phase 1 — Annotations (données fournies)
 
 Les annotations humaines sont stockées dans la table `annotations`. Pour une reproduction complète, l'annotateur re-swipe les 2 000 posts via l'interface. Pour une vérification, un dump SQL des annotations est fourni sur demande.
@@ -111,42 +114,44 @@ Les annotations humaines sont stockées dans la table `annotations`. Pour une re
 ### Phase 2 — Baseline zero-shot (B0)
 
 ```bash
-.venv/bin/python scripts/run_baseline.py
+uv run python scripts/run_baseline.py
 ```
 
 Évalue le prompt v0 sur les 437 posts test. Résultat stocké dans `simulation_runs`.
 
 ### Phase 3 — Simulation HILPO
 
+Au 5 avril 2026, le protocole offline/prequential est documenté mais le script `scripts/run_simulation.py` n'est pas encore présent dans la repo. L'interface cible est la suivante :
+
 ```bash
-.venv/bin/python scripts/run_simulation.py --batch-size 30
+uv run python scripts/run_simulation.py --batch-size 30
 ```
 
 Rejoue les annotations dev dans l'ordre de présentation. Le prompt évolue via le rewriter (protocole prequential). Résultat stocké dans `simulation_runs`.
 
 ### Ablations
 
+Même remarque : ces commandes correspondent aux scripts cibles après implémentation de la Phase 3.
+
 ```bash
-.venv/bin/python scripts/run_simulation.py --batch-size 1
-.venv/bin/python scripts/run_simulation.py --batch-size 10
-.venv/bin/python scripts/run_simulation.py --batch-size 50
+uv run python scripts/run_simulation.py --batch-size 1
+uv run python scripts/run_simulation.py --batch-size 10
+uv run python scripts/run_simulation.py --batch-size 50
 ```
 
 Même annotations, même ordre — seul le batch size change.
 
 ### Évaluation finale (BN)
 
-```bash
-.venv/bin/python scripts/run_baseline.py --prompt-version N
-```
-
-Évalue le prompt vN (dernier actif après convergence) sur les 437 posts test.
+Le dépôt ne contient pas encore le wrapper CLI final pour réévaluer le prompt vN sur le test set. L'intention est de réutiliser le pipeline de `run_baseline.py` avec une version de prompt sélectionnée en entrée.
 
 ### Métriques et figures
 
+Au 5 avril 2026, `scripts/metrics.py` et `scripts/figures.py` sont prévus mais pas encore présents dans la repo. Les commandes cibles sont :
+
 ```bash
-.venv/bin/python scripts/metrics.py --output results/
-.venv/bin/python scripts/figures.py --input results/ --output figures/
+uv run python scripts/metrics.py --output results/
+uv run python scripts/figures.py --input results/ --output figures/
 ```
 
 **Figures générées :**
@@ -181,10 +186,7 @@ hilpo/
 │   └── frontend/           ← React + Vite + TypeScript + shadcn/ui
 ├── scripts/
 │   ├── import_csv.py       ← import données + échantillonnage
-│   ├── run_baseline.py     ← [Phase 2] baselines zero-shot / few-shot
-│   ├── run_hilpo.py        ← [Phase 3] boucle HILPO multi-seeds
-│   ├── metrics.py          ← calcul F1, kappa, McNemar
-│   └── figures.py          ← génération des 4 figures du mémoire
+│   └── run_baseline.py     ← [Phase 2] baseline zero-shot B0
 ├── data/                   ← CSV (gitignored, sur demande)
 ├── results/                ← métriques exportées (gitignored)
 ├── figures/                ← PDF/PNG des figures (gitignored)
@@ -196,6 +198,11 @@ hilpo/
     └── ...
 ```
 
+Scripts prévus après implémentation de la Phase 3 :
+- `scripts/run_simulation.py` — replay prequential + rewriter
+- `scripts/metrics.py` — calcul F1, kappa, McNemar
+- `scripts/figures.py` — génération des figures du mémoire
+
 ## Reproductibilité — design
 
 | Mécanisme | Implémentation |
@@ -205,7 +212,7 @@ hilpo/
 | **Prompt versionné** | `prompt_versions.content` stocke le texte intégral, parent_id trace l'historique |
 | **Match auto-calculé** | Trigger `trg_prediction_match` compare prédiction vs annotation |
 | **Traçabilité API** | `api_calls` : tokens, coût, latence, agent, prompt_version par appel |
-| **Simulations rejouables** | `simulation_runs` : seed, batch_size, config, résultats agrégés |
+| **Runs versionnés** | `simulation_runs` : seed, batch_size, config, résultats agrégés |
 | **Descriptions fixes** | Taxonomie rédigée par l'humain (Δ), injectée dans le prompt, non modifiée par le rewriter |
 
 ## Contact

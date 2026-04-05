@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **2.20** — 2026-04-05
+> Version **2.21** — 2026-04-05
 
 ## Double dimension du projet
 
@@ -46,6 +46,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 2.21 | 2026-04-05 | Docs harmonisées sur le protocole offline/prequential, reliquats live supprimés, REPRODUCE réaligné sur l'état réel de la repo |
 | 2.20 | 2026-04-05 | B0 terminé (87.3% / 64.3% / 93.5%, $1.14), résultats documentés, protocole B0→BN explicité, Phase 2 ✅ |
 | 2.19 | 2026-04-05 | Pipeline E2E fonctionnel (3/3 match), prompts v0 en BDD, GCS signing, google-cloud-storage dans pyproject |
 | 2.18 | 2026-04-05 | Squelette hilpo/ implémenté (7 modules), migration 003 descriptor, pyproject.toml racine, docs corrigés |

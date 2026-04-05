@@ -20,7 +20,7 @@ Rapportés sur 1 run principal (contrainte de coût API). La variance est adress
 
 Le protocole repose sur la comparaison de deux runs sur le **même test set** (437 posts) :
 
-1. **Annotation** : l'humain annote le dev (~1560 posts) en aveugle (sans voir les prédictions)
+1. **Annotation** : l'humain annote le dev (1 563 posts) en aveugle (sans voir les prédictions)
 2. **B0** (fait) : prompt v0 (écrit à la main) évalué sur test → accuracy baseline
 3. **Simulation HILPO** : replay séquentiel des annotations dev dans l'ordre de présentation. Protocole prequential : le prompt évolue v0 → v1 → ... → vN via le rewriter (B=30, delta=2%, patience=3).
 4. **BN** : prompt vN (dernier prompt actif après convergence) évalué sur test → accuracy finale
@@ -34,7 +34,7 @@ Chaque run est stocké dans `simulation_runs` avec sa config, ses métriques, et
 - Courbe accuracy vs nombre d'annotations (dev uniquement, rolling window de 50 posts)
 - Les moments de rewrite (v0 → v1 → v2...) sont annotés sur la courbe
 - Plateau défini comme : variation < 2% sur les 3 dernières itérations
-- Aucune réévaluation pendant la boucle — la courbe se dessine passivement avec les données en BDD
+- Les blocs de comparaison incumbent/candidate post-rewrite sont évalués explicitement sur le bloc futur commun (`eval_window=30`)
 
 ## Fiabilité de l'annotation
 
@@ -117,7 +117,7 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 |--------|------------------|--------|
 | Annoter split test (437 posts) | Ground truth test | ✅ fait |
 | B0 : zero-shot prompt v0 sur test | Accuracy baseline | ✅ fait — 87.3% / 64.3% / 93.5% |
-| Annoter split dev (~1560 posts) | Ground truth dev | ⬜ à faire (boucle HILPO live) |
+| Annoter split dev (1 563 posts) | Ground truth dev | ⬜ à faire (annotation aveugle, puis simulation prequential) |
 | Kappa intra-annotateur (re-swipe 50 posts) | Fiabilité ≥ 0.7 | ⬜ à faire |
 
 ### Tier 2 — Nécessaire pour le claim
@@ -148,8 +148,8 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 
 ## 4 figures indispensables
 
-1. **Courbe de convergence** : F1 macro en Y, nombre d'annotations en X. Montrer dev (rolling window). Annoter les moments de rewrite (v0 → v1 → v2...).
-2. **Tableau de comparaison** : B0, B2, HILPO vN, avec accuracy + F1 macro, p-values McNemar.
+1. **Courbe de convergence** : accuracy en Y, nombre d'annotations en X. Montrer dev (rolling window). Annoter les moments de rewrite (v0 → v1 → v2...).
+2. **Tableau de comparaison** : B0, B2, HILPO vN, avec accuracy + F1 macro, p-value McNemar.
 3. **Ablation batch size** : Barplot ou courbe montrant l'effet de B=1, 10, 30, 50 sur la performance finale.
 4. **Matrice de confusion** : Pour visual_format, avant (v0) vs après (vN).
 
@@ -173,9 +173,9 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 | B1 | Zero-shot CLIP | Zero-shot | 0 |
 | B2 | Few-shot 5 exemples/classe | Few-shot | ~150 |
 | B3 | Few-shot 10 exemples/classe | Few-shot | ~300 |
-| B4 | CLIP embeddings + Logistic Regression | Supervisé | 1600 |
-| B5 | CLIP embeddings + SVM | Supervisé | 1600 |
-| B6 | Fine-tuning LoRA (si faisable) | Supervisé | 1600 |
+| B4 | CLIP embeddings + Logistic Regression | Supervisé | 1563 |
+| B5 | CLIP embeddings + SVM | Supervisé | 1563 |
+| B6 | Fine-tuning LoRA (si faisable) | Supervisé | 1563 |
 
 ## Checklist de recevabilité
 
@@ -186,10 +186,10 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 - [x] Formalisation mathématique de la boucle
 
 ### Protocole
-- [ ] Ground truth ≥ 1600 dev + 400 test
+- [ ] Ground truth ≥ 1563 dev + 437 test
 - [ ] Kappa intra-annotateur ≥ 0.7
-- [ ] 5 splits pour moyennes ± écart-type
-- [ ] McNemar + Bonferroni
+- [ ] 1 run principal + ablations batch size
+- [ ] McNemar sur B0 vs HILPO vN
 
 ### Résultats
 - [x] B0 (zero-shot v0) — 87.3% / 64.3% / 93.5%

@@ -10,7 +10,7 @@ Dans le cadre d'une alternance chez Views, ce projet répond au besoin de classi
 
 ## Méthode
 
-Nous proposons HILPO, une méthode d'optimisation itérative de prompts par boucle humain-dans-la-boucle. Un annotateur humain classifie les publications une à une via une interface de swipe. En parallèle, un modèle de vision prédit la classification à partir d'un prompt système. Lorsque le modèle se trompe, un agent rewriter analyse les erreurs accumulées et propose une nouvelle version du prompt, stockée et versionnée en base de données.
+Nous proposons HILPO, une méthode d'optimisation itérative de prompts par boucle humain-dans-la-boucle. Un annotateur humain classe d'abord les publications via une interface de swipe, puis un script rejoue les annotations dans l'ordre de présentation et simule la boucle d'optimisation (protocole prequential). Lorsque le modèle se trompe, un agent rewriter analyse les erreurs accumulées et propose une nouvelle version du prompt, stockée et versionnée en base de données.
 
 L'hypothèse est que cette boucle d'optimisation permet d'atteindre une performance de classification satisfaisante sans recourir au fine-tuning, avec un volume d'annotations réduit et un artefact interprétable : le prompt optimisé.
 
@@ -22,7 +22,7 @@ Les mécanismes d'interaction sont définis dans [`.claude/hooks/`](.claude/hook
 
 ## Reproduction
 
-Voir [`REPRODUCE.md`](REPRODUCE.md) pour le guide complet de reproduction des résultats (prérequis, données, installation, exécution des expériences).
+Voir [`REPRODUCE.md`](REPRODUCE.md) pour le guide de reproduction de l'état actuel des résultats et du protocole expérimental visé.
 
 ## Licence
 
