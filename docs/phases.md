@@ -21,7 +21,7 @@
 - Le modèle prédit en parallèle de l'humain **sur le split dev**
 - L'humain annote les posts dev au fil de l'eau — chaque annotation est comparée à la prédiction du modèle
 - Mesure du taux d'accord → baseline
-- **Statut** : architecture validée, implémentation pas commencée
+- **Statut** : squelette implémenté (hilpo/ : config, client, router, schemas, agent, inference, db). Reste : prompts v0, test E2E, intégration live.
 
 ## Phase 3 — Rewriter agentique
 - Agent rewriter qui propose de nouvelles versions du prompt

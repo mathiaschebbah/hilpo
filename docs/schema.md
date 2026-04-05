@@ -3,6 +3,7 @@
 Fichiers :
 - [`001_initial_schema.sql`](../apps/backend/migrations/001_initial_schema.sql) — tables de base
 - [`002_experiment_infra.sql`](../apps/backend/migrations/002_experiment_infra.sql) — reproductibilité + simulations
+- [`003_descriptor_agent.sql`](../apps/backend/migrations/003_descriptor_agent.sql) — ajout `descriptor` à l'enum `agent_type`
 
 ## Tables
 

@@ -31,3 +31,7 @@ Les images/vidéos sont stockées sur Google Cloud Storage (bucket privé). Le b
 ## Dépendances backend
 
 FastAPI, SQLAlchemy (async), asyncpg, pydantic-settings, uvicorn, alembic, google-cloud-storage, google-auth
+
+## Dépendances package hilpo/ (pyproject.toml racine)
+
+openai (SDK compatible OpenRouter), pydantic, psycopg[binary]. Optionnel (eval) : scikit-learn, numpy.

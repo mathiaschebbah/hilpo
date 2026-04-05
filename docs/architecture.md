@@ -172,9 +172,11 @@ hilpo/              ← package Python : moteur HILPO
 ├── config.py       ← OpenRouter API key, model IDs
 ├── client.py       ← client OpenRouter (compatible OpenAI SDK)
 ├── router.py       ← routage déterministe FEED/REELS
-├── agent.py        ← agent paramétré (descripteur ou classifieur)
+├── schemas.py      ← DescriptorFeatures (Pydantic), PostPrediction
+├── agent.py        ← descripteur multimodal + classifieurs tool use
 ├── inference.py    ← pipeline : router → descripteur → 3 classifieurs → stockage
-└── eval.py         ← métriques (F1, kappa, confusion)
+├── db.py           ← accès BDD (taxonomie, posts, prompts, prédictions, api_calls)
+└── eval.py         ← métriques (F1, kappa, confusion) — à implémenter
 
 apps/backend/       ← FastAPI : couche HTTP pour l'interface d'annotation
 ```
