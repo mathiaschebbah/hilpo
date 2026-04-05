@@ -162,32 +162,58 @@ Ce découplage est mathématiquement équivalent au live car :
 
 **Avantage** : les ablations sont triviales — on rejoue la simulation avec B=1, 10, 30, 50 sans ré-annoter.
 
-### Boucle HILPO (simulation)
+### Boucle HILPO (simulation prequential)
 
-Le script de simulation parcourt les posts dev dans l'ordre de présentation :
+Le script de simulation parcourt les posts dev dans l'ordre de présentation. Le protocole est du type **prequential / progressive validation** : chaque bloc sert à évaluer avant de servir à optimiser.
 
-1. Pour chaque post : descripteur → 3 classifieurs avec le prompt actif
-2. Comparaison prédiction vs annotation humaine
-3. Si erreur → ajoutée au buffer
-4. Si |buffer| ≥ B (défaut 30) → le rewriter se déclenche :
-   a. Il reçoit le prompt actif + le batch d'erreurs (avec features, descriptions, attendu vs observé)
-   b. Il propose un nouveau prompt → stocké en **draft**
-5. Le draft devient actif pour les prochains posts (évaluation passive)
-6. Après 30 posts classifiés avec le draft, on compare :
-   - match rate du draft vs match rate de l'ancien prompt sur ses 30 derniers posts
-   - Si draft ≥ ancien → **promotion** (draft active, ancien retired)
-   - Sinon → **rollback** (ancien restauré, draft rejeté)
-7. Le buffer d'erreurs est réinitialisé, le cycle recommence
+#### Paramètres (fixés à l'avance)
 
-Critère d'arrêt : convergence (variation accuracy < 2% sur les 3 dernières itérations) ou fin des posts dev.
+| Paramètre | Valeur | Description |
+|-----------|--------|-------------|
+| `B` | 30 | Nombre d'erreurs avant trigger rewriter |
+| `delta` | 2% | Gain minimum pour promotion |
+| `patience` | 3 | Nombre de rewrites sans amélioration avant arrêt |
+| `eval_window` | 30 | Taille du bloc d'évaluation post-rewrite |
+
+#### Flux
+
+1. Classer les posts un par un avec le prompt **incumbent** (actif)
+2. Comparer chaque prédiction à l'annotation humaine
+3. Si erreur : ajoutée au buffer
+4. Si |buffer| >= B : le rewriter se déclenche
+   - Il reçoit l'incumbent + le batch d'erreurs (features, descriptions, attendu vs observé)
+   - Il propose un **candidate**
+5. **Double évaluation** sur le bloc suivant (30 posts) :
+   - Classer les 30 posts avec l'**incumbent**
+   - Classer les 30 posts avec le **candidate**
+   - Comparer les match rates sur les **mêmes posts**
+6. Si accuracy(candidate) >= accuracy(incumbent) + delta : **promotion**
+   Sinon : **rollback**
+7. Reset du buffer d'erreurs, le cycle recommence
+8. **Arrêt** si `patience` rewrites consécutifs sans promotion, ou fin des posts dev
+
+#### Nombre de rewrites estimé (basé sur B0)
+
+| Axe | Taux d'erreur B0 | Rewrites estimés (1560 posts) |
+|-----|-------------------|-------------------------------|
+| visual_format | ~36% | ~19 |
+| catégorie | ~13% | ~6 |
+| stratégie | ~6.5% | ~3 |
 
 Note : le rewriter peut optimiser le prompt du descripteur ET des classifieurs (2 niveaux d'optimisation).
 
 ### Évaluation
 
-**Pendant la simulation (dev)** : chaque post est classifié avec le prompt actif à ce moment de la simulation. Le match est calculé automatiquement. La courbe de convergence se dessine en rolling window (fenêtre de 50 posts) en fonction du nombre de posts traités. Les moments de rewrite (v0 → v1 → v2...) sont annotés sur la courbe.
+**Pendant la simulation (dev)** : chaque post est classifié avec le prompt actif à ce moment de la simulation. Le match est calculé automatiquement. La courbe de convergence se dessine en rolling window (fenêtre de 50 posts). Les moments de rewrite (v0 -> v1 -> v2...) sont annotés sur la courbe.
 
 **Évaluation finale (test)** : le prompt vN (dernier prompt actif après convergence) est évalué une seule fois sur les 437 posts test via le même script que le B0. Comparé au B0 (prompt v0 sur le même test set).
+
+### Limites à documenter dans le mémoire
+
+- **Dépendance au chemin** : l'ordre de présentation (seed=42) influence quels posts tombent dans quel batch. Un autre seed donnerait une trajectoire différente.
+- **Variance** : un seul run, pas de moyenne sur 5 splits (contrainte de coût API). À compenser par les ablations.
+- **Pas de validation fixe** : pas de dev_val séparé. La séparation temporelle (prequential) joue ce rôle. Le test reste strictement untouched.
+- **Prequential, pas iid** : le protocole assume un ordre séquentiel, pas un échantillonnage iid. À présenter comme tel.
 
 ## Séparation backend / engine
 
