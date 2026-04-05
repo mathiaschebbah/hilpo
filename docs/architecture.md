@@ -160,11 +160,23 @@ Chaque agent a un prompt composé de deux blocs :
 
 1. Tous les B=30 erreurs d'un agent, le rewriter se déclenche
 2. Le rewriter reçoit le prompt actif + le batch d'erreurs
-3. Il propose un nouveau prompt → stocké en draft
-4. Évaluation passive sur les posts suivants
-5. Si accuracy ≥ ancienne → promotion en actif, sinon → rejeté
+3. Il propose un nouveau prompt → stocké en **draft**
+4. Le draft devient le prompt actif pour les prochains posts (évaluation passive)
+5. Après 30 nouveaux posts annotés avec le draft, on compare :
+   - match rate du draft sur ses 30 posts vs match rate de l'ancien prompt sur ses 30 derniers posts
+   - Si draft ≥ ancien → **promotion** (draft devient active, ancien passe à retired)
+   - Sinon → **rollback** (ancien prompt restauré comme active, draft rejeté)
+6. Le buffer d'erreurs est réinitialisé, le cycle recommence
 
 Note : le rewriter peut optimiser le prompt du descripteur ET des classifieurs (2 niveaux d'optimisation).
+
+### Évaluation — aucune réévaluation pendant la boucle
+
+**Pendant la boucle (dev)** : la performance est mesurée passivement sur les posts annotés. Chaque post est classifié avec le prompt actif au moment de l'annotation. Le match (prédit vs annotation humaine) est calculé automatiquement par le trigger BDD. Il n'y a aucune réévaluation des posts passés — chaque post est classifié une seule fois.
+
+**Courbe de convergence** : accuracy en rolling window (fenêtre de 50 posts) tracée en fonction du nombre d'annotations. Les moments de rewrite (v0 → v1 → v2...) sont annotés sur la courbe. Se dessine uniquement avec les données déjà en BDD (table `predictions`).
+
+**Évaluation finale (test)** : le prompt vN (dernier prompt actif) est évalué une seule fois sur les 437 posts test. C'est le seul moment où le test set est utilisé. Comparé au B0 (prompt v0 sur le même test set).
 
 ## Séparation backend / engine
 
