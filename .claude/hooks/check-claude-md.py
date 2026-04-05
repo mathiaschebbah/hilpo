@@ -31,7 +31,7 @@ def main():
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
-            "notification": message,
+            "additionalContext": message,
         }
     }))
 

@@ -48,7 +48,7 @@ def main():
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "notification": (
+                "additionalContext": (
                     f"**Agent Perspective** : {commits_since} commits depuis la dernière mise à jour "
                     f"de `{PERSPECTIVE_FILE}`. "
                     "Ajoute une nouvelle section datée avec ton état de compréhension actuel du projet, "
