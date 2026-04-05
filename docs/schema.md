@@ -20,7 +20,7 @@ Fichiers :
 | `heuristic_labels` | Catégorisation v0 — heuristique imprécise (import CSV) |
 | `sample_posts` | Échantillon 2000 posts + split dev/test + ordre de présentation |
 | `annotations` | Annotations humaines (corrections/validations, flag `doubtful` pour re-review) |
-| `prompt_versions` | Prompts versionnés **par agent × scope** (type de post) |
+| `prompt_versions` | Prompts versionnés **par agent × scope** (type de post), trackés par `simulation_run_id` |
 | `predictions` | Prédictions par agent + match auto-calculé par trigger |
 | `rewrite_logs` | Historique des réécritures de prompt (avant/après, raisonnement) |
 | `api_calls` | Traçabilité complète des appels API (tokens, coût, latence) |
@@ -56,5 +56,6 @@ Un seul prompt actif par combinaison `(agent, scope)` — index unique partiel.
 ## Contraintes clés
 
 - `UNIQUE (agent, scope) WHERE status = 'active'` — un seul prompt actif par agent × scope
+- `UNIQUE (simulation_run_id, agent, scope, version) NULLS NOT DISTINCT WHERE simulation_run_id IS NOT NULL` — pas de version dupliquée au sein d'un même run de simulation
 - `UNIQUE (ig_media_id, annotator)` — une annotation par post par annotateur
 - `UNIQUE (parent_ig_media_id, media_order)` — ordre des médias dans un carousel

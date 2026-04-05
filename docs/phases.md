@@ -30,4 +30,5 @@
 - Critère d'arrêt : `patience=3` rewrites consécutifs sans promotion (compteur global, pas par cible)
 - Ablations triviales : rejouer avec B=1, 10, 30, 50 sans ré-annoter
 - Contribution principale du mémoire
-- **Statut** : implémenté — rewriter.py + run_simulation.py fonctionnels, dry-run testé. En attente des annotations dev pour le run complet.
+- Robustesse : promotion atomique (`promote_prompt`), tracking versions par run (`simulation_run_id`), contexte rewriter complet pour le descripteur
+- **Statut** : implémenté et durci — rewriter.py + run_simulation.py fonctionnels, migration 005 appliquée. En attente des annotations dev pour le run complet.

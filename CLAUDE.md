@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **2.23** — 2026-04-05
+> Version **2.24** — 2026-04-05
 
 ## Double dimension du projet
 
@@ -46,6 +46,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 2.24 | 2026-04-05 | Robustesse boucle : promotion atomique (promote_prompt), tracking versions par run (migration 005), contexte rewriter complet pour le descripteur |
 | 2.23 | 2026-04-05 | Phase 3 implémentée : rewriter.py (GPT-5.4), eval.py, run_simulation.py (boucle prequential), migration 004, docs synchronisés |
 | 2.22 | 2026-04-05 | Fix ensure_prompts_v0 dans run_baseline, refs prequential (Dawid 1984, Gama 2014), async_inference dans architecture, backup BDD |
 | 2.21 | 2026-04-05 | Docs harmonisées sur le protocole offline/prequential, reliquats live supprimés, REPRODUCE réaligné sur l'état réel de la repo |
