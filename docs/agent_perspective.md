@@ -109,3 +109,41 @@ Mathias stresse sur la deadline (18 avril), hésite entre avancer vite et compre
 - Phase 2 demain après-midi
 - La fusion mood/edito_photo va simplifier la classification pour HILPO — moins d'ambiguïté
 - L'axe visual_format reste le plus dur (67 classes après fusion) mais les descriptions améliorées devraient aider
+
+---
+
+## Snapshot 2026-04-05 — Après-midi — Pipeline E2E fonctionnel, architecture Phase 2 validée
+
+### Changements depuis le dernier snapshot
+
+- **Architecture Phase 2 conçue et implémentée** : pipeline en 2 étapes (descripteur multimodal → 3 classifieurs text-only en parallèle)
+- **Choix des modèles** : Qwen 3.5 Flash (FEED, $0.065/M) + Gemini 2.5 Flash (REELS avec audio, $0.30/M)
+- **Package `hilpo/` implémenté** : 9 modules (config, client, router, schemas, agent, inference, async_inference, db, gcs, prompts_v0)
+- **6 prompts v0 insérés en BDD** (`prompt_versions`, status active)
+- **Pipeline E2E testé** : 3/3 match sur le premier post (Demon Slayer → cinema / reel_news / Organic)
+- **Batch async** : 5 posts en 18s, prêt pour le baseline B0 sur 437 posts
+- **Config .env** : plus de variables d'environnement passées à la main
+- **Migration 003** : `descriptor` ajouté à l'enum `agent_type`
+
+### Décisions architecturales prises avec l'humain
+
+1. **Descripteur + classifieurs (pas classification directe)** — Idée de Mathias : un sous-agent décrit visuellement chaque média, puis les classifieurs travaillent sur du texte. Réduit le coût (images payées 1×), améliore la traçabilité.
+2. **Structured output + résumé libre** — Le descripteur retourne un JSON typé (texte_overlay, logos, mise_en_page...) ET un résumé visuel insightful en texte libre. L'humain a insisté sur le résumé libre.
+3. **Tool use avec enum fermé** — Les classifieurs sont contraints structurellement. Impossible de retourner un label hors taxonomie.
+4. **Gemini pour les REELS** — Le seul modèle cheap qui gère l'audio. Nécessaire pour `reel_voix_off`.
+5. **Descriptions Δ^m chargées dynamiquement** — Les descriptions taxonomiques vivent dans les tables BDD, pas dans `prompt_versions`. Seules les instructions I_t sont versionnées et optimisables.
+6. **simulation_run pour le B0** — Chaque expérience est groupée dans un run traçable.
+
+### Observations sur la collaboration
+
+- **L'idée du descripteur vient de l'humain.** J'avais proposé 3 agents multimodaux directs. Mathias a demandé "est-ce que c'est pertinent de donner directement la tâche de classifier, ou un sous-agent qui décrit ?" — c'est une bien meilleure architecture.
+- **Le debugging des 5 premiers posts a montré** que le descripteur fonctionne bien (il décrit correctement) mais le classifieur visual_format a des règles trop rigides dans ses instructions I_t. L'humain a observé que les descriptions taxonomiques couvrent déjà les cas edge (ancien post_news sans texte overlay) — c'est les instructions qui sont le maillon faible. C'est exactement ce que HILPO optimisera.
+- **L'humain a refusé d'améliorer le v0** avant le baseline : "c'est le baseline, il est censé être imparfait". Bon réflexe scientifique.
+- **AskUserQuestion intensif** : rappelé par l'humain en début de session, appliqué tout au long. Chaque décision architecturale validée avant implémentation.
+
+### Prédictions mises à jour
+
+- Le B0 sur 437 posts test donnera probablement : catégorie ~70-80%, visual_format ~30-50%, stratégie ~85-90%
+- Le visual_format sera le plus faible à cause de la sur-prédiction de `post_mood` (règle trop rigide dans I_t)
+- La boucle HILPO devrait améliorer visual_format significativement (les descriptions sont bonnes, seules les instructions sont à optimiser)
+- Le coût du B0 sera <$1 (Qwen + Gemini Flash sont très cheap)
