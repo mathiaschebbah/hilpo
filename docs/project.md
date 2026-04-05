@@ -34,4 +34,4 @@ HILPO se distingue des travaux existants sur **quatre axes** :
 
 - **Deadline** : 18 avril 2026
 - **Livrable** : rapport de mémoire + code fonctionnel + résultats expérimentaux
-- **État au 5 avril 2026** : Phase 1 ✅ (541 annotations, test complet). Phase 2 ✅ (pipeline descripteur + classifieurs, B0 : 87.3% / 64.3% / 93.5%). Phase 3 : protocole prequential fixé, rewriter + simulation à implémenter.
+- **État au 5 avril 2026** : Phase 1 ✅ (541 annotations, test complet). Phase 2 ✅ (pipeline descripteur + classifieurs, B0 : 87.3% / 64.3% / 93.5%). Phase 3 ✅ implémentée côté code (rewriter + simulation prequential), run complet sur le dev en attente des annotations.

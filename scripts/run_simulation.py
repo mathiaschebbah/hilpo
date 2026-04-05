@@ -40,6 +40,7 @@ from hilpo.db import (
     store_rewrite_log,
 )
 from hilpo.eval import accuracy
+from hilpo.errors import LLMCallError
 from hilpo.gcs import sign_all_posts_media
 from hilpo.inference import ApiCallLog, PipelineResult, PostInput, PromptSet, classify_post
 from hilpo.prompts_v0 import PROMPTS_V0
@@ -125,6 +126,51 @@ def finish_run(conn, run_id: int, metrics: dict):
         ),
     )
     conn.commit()
+
+
+def fail_run(conn, run_id: int, error_message: str, metrics: dict):
+    """Marque un run comme échoué en conservant les métriques partielles."""
+    conn.execute(
+        """
+        UPDATE simulation_runs SET
+            status = 'failed', finished_at = NOW(),
+            final_accuracy_category = %s,
+            final_accuracy_visual_format = %s,
+            final_accuracy_strategy = %s,
+            prompt_iterations = %s,
+            total_api_calls = %s, total_cost_usd = %s,
+            config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('failure_reason', %s)
+        WHERE id = %s
+        """,
+        (
+            metrics["accuracy_category"],
+            metrics["accuracy_visual_format"],
+            metrics["accuracy_strategy"],
+            metrics["prompt_iterations"],
+            metrics["total_api_calls"],
+            metrics.get("total_cost_usd"),
+            error_message[:1000],
+            run_id,
+        ),
+    )
+    conn.commit()
+
+
+def build_run_metrics(
+    matches_by_axis: dict[str, int],
+    n_processed: int,
+    rewrite_count: int,
+    total_api_calls: int,
+) -> dict:
+    """Construit le payload de métriques final ou partiel pour simulation_runs."""
+    return {
+        "accuracy_category": matches_by_axis["category"] / n_processed if n_processed else 0,
+        "accuracy_visual_format": matches_by_axis["visual_format"] / n_processed if n_processed else 0,
+        "accuracy_strategy": matches_by_axis["strategy"] / n_processed if n_processed else 0,
+        "prompt_iterations": rewrite_count,
+        "total_api_calls": total_api_calls,
+        "total_cost_usd": None,
+    }
 
 
 def ensure_prompts_v0(conn) -> dict[tuple[str, str | None], int]:
@@ -512,7 +558,7 @@ def display_progress(cursor, total, matches_by_axis, n_processed, error_count, b
         f"| v{max_v} "
         f"| err={error_count}/{batch_size} "
         f"| {rate:.1f}p/s ETA {eta:.0f}s "
-        f"| ${cost:.2f}",
+        f"| est~${cost:.2f}",
         end="", flush=True,
     )
 
@@ -550,331 +596,352 @@ def main():
     args = parser.parse_args()
 
     conn = get_conn()
+    run_id: int | None = None
     t0 = time.monotonic()
-
-    # ── Header ──
-    log.info("=" * 60)
-    log.info("  HILPO — Simulation prequential")
-    log.info("  B=%d  delta=%.0f%%  patience=%d  eval_window=%d",
-             args.batch_size, args.delta * 100, args.patience, args.eval_window)
-    if args.dry_run:
-        log.info("  MODE: dry-run (pas de rewrite)")
-    if args.no_rollback:
-        log.info("  MODE: no-rollback (ablation A5)")
-    log.info("=" * 60)
-
-    # ── 1. Charger les posts dev ──
-    raw_posts = load_dev_posts(conn, limit=args.limit)
-    log.info("Posts dev chargés : %d", len(raw_posts))
-
-    # ── 2. Charger les annotations ──
-    annotations = load_dev_annotations(conn)
-    log.info("Annotations dev : %d", len(annotations))
-
-    # Filtrer les posts non annotés
-    annotated_ids = set(annotations.keys())
-    raw_posts = [p for p in raw_posts if p["ig_media_id"] in annotated_ids]
-    if len(raw_posts) < len(annotated_ids):
-        log.warning("  %d posts sans annotation — ignorés", len(annotated_ids) - len(raw_posts))
-    log.info("Posts à traiter : %d", len(raw_posts))
-
-    if not raw_posts:
-        log.error("Aucun post annoté dans le split dev. Annote d'abord !")
-        sys.exit(1)
-
-    # ── 3. Simulation run ──
-    run_id = create_run(conn, {
-        "name": f"HILPO_B{args.batch_size}" + ("_dryrun" if args.dry_run else ""),
-        "split": "dev",
-        "batch_size": args.batch_size,
-        "delta": args.delta,
-        "patience": args.patience,
-        "eval_window": args.eval_window,
-        "dry_run": args.dry_run,
-        "no_rollback": args.no_rollback,
-        "rewriter_model": args.rewriter_model,
-    })
-    log.info("simulation_run id=%d", run_id)
-
-    # ── 4. Signer les URLs GCS ──
-    log.info("Signature des URLs GCS (expiration 120min)...")
-    signed_by_post = sign_all_posts_media(raw_posts, load_post_media, conn, max_workers=20)
-
-    post_inputs: list[PostInput] = []
-    skipped = 0
-    for post in raw_posts:
-        mid = post["ig_media_id"]
-        signed = signed_by_post.get(mid, [])
-        if not signed:
-            skipped += 1
-            continue
-        post_inputs.append(PostInput(
-            ig_media_id=mid,
-            media_product_type=post["media_product_type"],
-            media_urls=[u for u, _ in signed],
-            media_types=[m for _, m in signed],
-            caption=post["caption"],
-        ))
-
-    feed = sum(1 for p in post_inputs if p.media_product_type == "FEED")
-    reels = len(post_inputs) - feed
-    log.info("Prêts : %d (FEED %d / REELS %d) — %d skippés", len(post_inputs), feed, reels, skipped)
-
-    # ── 5. Initialiser les prompts ──
-    prompt_ids = ensure_prompts_v0(conn)
-    prompt_state = PromptState(
-        instructions={k: v for k, v in PROMPTS_V0.items()},
-        db_ids=dict(prompt_ids),
-        versions={k: 0 for k in PROMPTS_V0},
-    )
-
-    # ── 6. Labels et descriptions par scope (cache) ──
-    labels_by_scope: dict[str, dict[str, list[str]]] = {}
-    for scope in ("FEED", "REELS"):
-        labels_by_scope[scope] = build_labels(conn, scope)
-
-    # ── 7. Boucle principale ──
-    log.info("Classification en cours...")
-
-    error_buffer: list[ErrorCase] = []
-    all_matches: list[MatchRecord] = []
     matches_by_axis = {"category": 0, "visual_format": 0, "strategy": 0}
-    cursor = 0
     n_processed = 0
     total_api_calls = 0
-    total_cost = 0.0
+    live_cost_estimate_usd = 0.0
     rewrite_count = 0
-    consecutive_failures = 0
-    rewrites_stopped = False
+    skipped_classification_posts = 0
+    failed_rewrite_attempts = 0
 
-    total = len(post_inputs)
+    try:
+        # ── Header ──
+        log.info("=" * 60)
+        log.info("  HILPO — Simulation prequential")
+        log.info("  B=%d  delta=%.0f%%  patience=%d  eval_window=%d",
+                 args.batch_size, args.delta * 100, args.patience, args.eval_window)
+        if args.dry_run:
+            log.info("  MODE: dry-run (pas de rewrite)")
+        if args.no_rollback:
+            log.info("  MODE: no-rollback (ablation A5)")
+        log.info("=" * 60)
 
-    while cursor < total:
-        post = post_inputs[cursor]
-        annotation = annotations[post.ig_media_id]
-        scope = post.media_product_type
+        # ── 1. Charger les posts dev ──
+        raw_posts = load_dev_posts(conn, limit=args.limit)
+        log.info("Posts dev chargés : %d", len(raw_posts))
 
-        # Classifier un post
-        prompts = build_prompts_from_state(prompt_state, conn, scope)
-        labels = labels_by_scope[scope]
+        # ── 2. Charger les annotations ──
+        annotations = load_dev_annotations(conn)
+        log.info("Annotations dev : %d", len(annotations))
 
-        result, errors, matches = classify_and_store(
-            post, annotation, prompts, labels, prompt_state, conn, run_id,
+        # Filtrer les posts non annotés
+        annotated_ids = set(annotations.keys())
+        raw_posts = [p for p in raw_posts if p["ig_media_id"] in annotated_ids]
+        if len(raw_posts) < len(annotated_ids):
+            log.warning("  %d posts sans annotation — ignorés", len(annotated_ids) - len(raw_posts))
+        log.info("Posts à traiter : %d", len(raw_posts))
+
+        if not raw_posts:
+            log.error("Aucun post annoté dans le split dev. Annote d'abord !")
+            sys.exit(1)
+
+        # ── 3. Simulation run ──
+        run_id = create_run(conn, {
+            "name": f"HILPO_B{args.batch_size}" + ("_dryrun" if args.dry_run else ""),
+            "split": "dev",
+            "batch_size": args.batch_size,
+            "delta": args.delta,
+            "patience": args.patience,
+            "eval_window": args.eval_window,
+            "dry_run": args.dry_run,
+            "no_rollback": args.no_rollback,
+            "rewriter_model": args.rewriter_model,
+        })
+        log.info("simulation_run id=%d", run_id)
+
+        # ── 4. Signer les URLs GCS ──
+        log.info("Signature des URLs GCS (expiration 120min)...")
+        signed_by_post = sign_all_posts_media(raw_posts, load_post_media, conn, max_workers=20)
+
+        post_inputs: list[PostInput] = []
+        skipped_signed_urls = 0
+        for post in raw_posts:
+            mid = post["ig_media_id"]
+            signed = signed_by_post.get(mid, [])
+            if not signed:
+                skipped_signed_urls += 1
+                continue
+            post_inputs.append(PostInput(
+                ig_media_id=mid,
+                media_product_type=post["media_product_type"],
+                media_urls=[u for u, _ in signed],
+                media_types=[m for _, m in signed],
+                caption=post["caption"],
+            ))
+
+        feed = sum(1 for p in post_inputs if p.media_product_type == "FEED")
+        reels = len(post_inputs) - feed
+        log.info("Prêts : %d (FEED %d / REELS %d) — %d skippés", len(post_inputs), feed, reels, skipped_signed_urls)
+
+        # ── 5. Initialiser les prompts ──
+        prompt_ids = ensure_prompts_v0(conn)
+        prompt_state = PromptState(
+            instructions={k: v for k, v in PROMPTS_V0.items()},
+            db_ids=dict(prompt_ids),
+            versions={k: 0 for k in PROMPTS_V0},
         )
 
-        for m in matches:
-            m.cursor = cursor
-            all_matches.append(m)
-            if m.match:
-                matches_by_axis[m.axis] += 1
+        # ── 6. Labels et descriptions par scope (cache) ──
+        labels_by_scope: dict[str, dict[str, list[str]]] = {}
+        for scope in ("FEED", "REELS"):
+            labels_by_scope[scope] = build_labels(conn, scope)
 
-        error_buffer.extend(errors)
-        n_processed += 1
-        total_api_calls += len(result.api_calls)
-        total_cost += sum(c.input_tokens * 0.0001 / 1000 + c.output_tokens * 0.0003 / 1000
-                          for c in result.api_calls)  # estimation rough
+        # ── 7. Boucle principale ──
+        log.info("Classification en cours...")
 
-        cursor += 1
+        error_buffer: list[ErrorCase] = []
+        all_matches: list[MatchRecord] = []
+        cursor = 0
+        consecutive_failures = 0
+        rewrites_stopped = False
 
-        display_progress(cursor, total, matches_by_axis, n_processed,
-                         len(error_buffer), args.batch_size, prompt_state.versions, total_cost, t0)
-        display_rolling(cursor, all_matches)
+        total = len(post_inputs)
 
-        # ── Trigger rewrite ? ──
-        if (
-            not args.dry_run
-            and not rewrites_stopped
-            and len(error_buffer) >= args.batch_size
-        ):
-            target_agent, target_scope = pick_rewrite_target(error_buffer)
-            target_errors = get_target_errors(error_buffer, target_agent, target_scope)
+        while cursor < total:
+            post = post_inputs[cursor]
+            annotation = annotations[post.ig_media_id]
+            scope = post.media_product_type
 
-            if not target_errors:
-                log.warning("[REWRITE] Aucune erreur exploitable pour %s/%s. Buffer reset.",
-                            target_agent, target_scope or "all")
-                error_buffer.clear()
+            # Classifier un post
+            prompts = build_prompts_from_state(prompt_state, conn, scope)
+            labels = labels_by_scope[scope]
+
+            try:
+                result, errors, matches = classify_and_store(
+                    post, annotation, prompts, labels, prompt_state, conn, run_id,
+                )
+            except LLMCallError as exc:
+                skipped_classification_posts += 1
+                cursor += 1
+                print()
+                log.warning(
+                    "[POST %d/%d] Classification échouée pour ig_media_id=%s après retries. Post ignoré: %s",
+                    cursor, total, post.ig_media_id, exc,
+                )
+                display_progress(
+                    cursor, total, matches_by_axis, n_processed,
+                    len(error_buffer), args.batch_size, prompt_state.versions, live_cost_estimate_usd, t0,
+                )
                 continue
 
-            rewrite_count += 1
-            print()  # newline après la progress bar
-            log.info("[REWRITE #%d] Buffer plein (%d erreurs). Cible: %s/%s (%d erreurs)",
-                     rewrite_count, len(error_buffer), target_agent, target_scope or "all", len(target_errors))
+            for m in matches:
+                m.cursor = cursor
+                all_matches.append(m)
+                if m.match:
+                    matches_by_axis[m.axis] += 1
 
-            # Descriptions pour le scope de la cible
-            effective_scope = target_scope or "FEED"  # fallback pour category/strategy
-            all_descs = format_descriptions(
-                load_visual_formats(conn, effective_scope) if target_agent in ("visual_format", "descriptor")
-                else load_categories(conn) if target_agent == "category"
-                else load_strategies(conn)
+            error_buffer.extend(errors)
+            n_processed += 1
+            total_api_calls += len(result.api_calls)
+            # Estimation live rough pour le monitoring local uniquement.
+            # Ne pas utiliser pour le mémoire : pricing variable selon provider/modèle/date.
+            live_cost_estimate_usd += sum(
+                c.input_tokens * 0.0001 / 1000 + c.output_tokens * 0.0003 / 1000
+                for c in result.api_calls
             )
 
-            # Appeler le rewriter
-            log.info("[REWRITE #%d] Appel rewriter (%s)...", rewrite_count, args.rewriter_model)
-            current_key = (target_agent, target_scope)
-            rewrite_result = rewrite_prompt(
-                target_agent=target_agent,
-                target_scope=target_scope,
-                current_instructions=prompt_state.instructions[current_key],
-                errors=target_errors,
-                all_descriptions=all_descs,
-                model=args.rewriter_model,
-            )
+            cursor += 1
 
-            store_api_call(
-                conn, "rewrite", target_agent, rewrite_result.model, prompt_state.db_ids[current_key],
-                None, rewrite_result.input_tokens, rewrite_result.output_tokens, None,
-                rewrite_result.latency_ms, run_id,
-            )
-            total_api_calls += 1
+            display_progress(cursor, total, matches_by_axis, n_processed,
+                             len(error_buffer), args.batch_size, prompt_state.versions, live_cost_estimate_usd, t0)
+            display_rolling(cursor, all_matches)
 
-            log.info("[REWRITE #%d] Candidate généré (%.1fs, %dK tokens). Évaluation sur %d posts...",
-                     rewrite_count, rewrite_result.latency_ms / 1000,
-                     (rewrite_result.input_tokens + rewrite_result.output_tokens) // 1000,
-                     args.eval_window)
+            # ── Trigger rewrite ? ──
+            if (
+                not args.dry_run
+                and not rewrites_stopped
+                and len(error_buffer) >= args.batch_size
+            ):
+                target_agent, target_scope = pick_rewrite_target(error_buffer)
+                target_errors = get_target_errors(error_buffer, target_agent, target_scope)
 
-            # Insérer le candidate en draft
-            new_version = prompt_state.versions[current_key] + 1
-            candidate_id = insert_prompt_version(
-                conn, target_agent, target_scope, new_version,
-                rewrite_result.new_instructions,
-                status="draft",
-                parent_id=prompt_state.db_ids[current_key],
-            )
+                if not target_errors:
+                    log.warning("[REWRITE] Aucune erreur exploitable pour %s/%s. Buffer reset.",
+                                target_agent, target_scope or "all")
+                    error_buffer.clear()
+                    continue
 
-            # Double évaluation
-            eval_end = min(cursor + args.eval_window, total)
-            eval_posts = post_inputs[cursor:eval_end]
+                rewrite_count += 1
+                print()  # newline après la progress bar
+                log.info("[REWRITE #%d] Buffer plein (%d erreurs). Cible: %s/%s (%d erreurs)",
+                         rewrite_count, len(error_buffer), target_agent, target_scope or "all", len(target_errors))
 
-            if len(eval_posts) < 5:
-                log.warning("[REWRITE #%d] Pas assez de posts pour évaluer (%d). Skip.", rewrite_count, len(eval_posts))
-                error_buffer.clear()
-                continue
+                try:
+                    # Descriptions pour le scope de la cible
+                    effective_scope = target_scope or "FEED"  # fallback pour category/strategy
+                    all_descs = format_descriptions(
+                        load_visual_formats(conn, effective_scope) if target_agent in ("visual_format", "descriptor")
+                        else load_categories(conn) if target_agent == "category"
+                        else load_strategies(conn)
+                    )
 
-            double_eval_result = double_evaluate(
-                eval_posts, annotations, cursor, prompt_state,
-                target_agent, target_scope,
-                rewrite_result.new_instructions, candidate_id,
-                conn, run_id, labels_by_scope,
-            )
+                    log.info("[REWRITE #%d] Appel rewriter (%s)...", rewrite_count, args.rewriter_model)
+                    current_key = (target_agent, target_scope)
+                    rewrite_result = rewrite_prompt(
+                        target_agent=target_agent,
+                        target_scope=target_scope,
+                        current_instructions=prompt_state.instructions[current_key],
+                        errors=target_errors,
+                        all_descriptions=all_descs,
+                        model=args.rewriter_model,
+                    )
 
-            inc_acc = accuracy(double_eval_result.incumbent_matches)
-            cand_acc = accuracy(double_eval_result.candidate_matches)
-            delta_actual = cand_acc - inc_acc
+                    store_api_call(
+                        conn, "rewrite", target_agent, rewrite_result.model, prompt_state.db_ids[current_key],
+                        None, rewrite_result.input_tokens, rewrite_result.output_tokens, None,
+                        rewrite_result.latency_ms, run_id,
+                    )
+                    total_api_calls += 1
 
-            # Compter les api calls de l'évaluation
-            eval_api_count = len(eval_posts) * 4 * 2  # 4 agents × 2 runs (rough)
-            total_api_calls += eval_api_count
+                    log.info("[REWRITE #%d] Candidate généré (%.1fs, %dK tokens). Évaluation sur %d posts...",
+                             rewrite_count, rewrite_result.latency_ms / 1000,
+                             (rewrite_result.input_tokens + rewrite_result.output_tokens) // 1000,
+                             args.eval_window)
 
-            # Promotion ou rollback
-            promoted = cand_acc >= inc_acc + args.delta
-            if args.no_rollback:
-                promoted = cand_acc > inc_acc  # ablation A5 : promote si strictement mieux
+                    new_version = prompt_state.versions[current_key] + 1
+                    candidate_id = insert_prompt_version(
+                        conn, target_agent, target_scope, new_version,
+                        rewrite_result.new_instructions,
+                        status="draft",
+                        parent_id=prompt_state.db_ids[current_key],
+                    )
 
-            store_rewrite_log(
-                conn,
-                prompt_before_id=prompt_state.db_ids[current_key],
-                prompt_after_id=candidate_id,
-                error_batch=[{
-                    "axis": e.axis,
-                    "predicted": e.predicted,
-                    "expected": e.expected,
-                    "ig_media_id": e.ig_media_id,
-                    "post_scope": e.post_scope,
-                } for e in target_errors],
-                rewriter_reasoning=rewrite_result.reasoning,
-                accepted=promoted,
-                simulation_run_id=run_id,
-                target_agent=target_agent,
-                target_scope=target_scope,
-                incumbent_accuracy=inc_acc,
-                candidate_accuracy=cand_acc,
-                eval_sample_size=len(eval_posts),
-                iteration=rewrite_count,
-            )
+                    eval_end = min(cursor + args.eval_window, total)
+                    eval_posts = post_inputs[cursor:eval_end]
 
-            if promoted:
-                # Retire l'ancien, active le nouveau
-                retire_prompt(conn, prompt_state.db_ids[current_key])
-                activate_prompt(conn, candidate_id)
+                    if len(eval_posts) < 5:
+                        log.warning("[REWRITE #%d] Pas assez de posts pour évaluer (%d). Skip.", rewrite_count, len(eval_posts))
+                        error_buffer.clear()
+                        continue
 
-                prompt_state.instructions[current_key] = rewrite_result.new_instructions
-                prompt_state.db_ids[current_key] = candidate_id
-                prompt_state.versions[current_key] = new_version
-                consecutive_failures = 0
+                    double_eval_result = double_evaluate(
+                        eval_posts, annotations, cursor, prompt_state,
+                        target_agent, target_scope,
+                        rewrite_result.new_instructions, candidate_id,
+                        conn, run_id, labels_by_scope,
+                    )
 
-                log.info("[REWRITE #%d] Incumbent %.1f%% vs Candidate %.1f%% (Δ=+%.1f%%)",
-                         rewrite_count, inc_acc * 100, cand_acc * 100, delta_actual * 100)
-                log.info("[REWRITE #%d] >>> PROMOTED (v%d → v%d %s/%s) <<<",
-                         rewrite_count, new_version - 1, new_version, target_agent, target_scope or "all")
-            else:
-                consecutive_failures += 1
-                log.info("[REWRITE #%d] Incumbent %.1f%% vs Candidate %.1f%% (Δ=%.1f%%)",
-                         rewrite_count, inc_acc * 100, cand_acc * 100, delta_actual * 100)
-                log.info("[REWRITE #%d] <<< ROLLBACK (patience %d/%d) <<<",
-                         rewrite_count, consecutive_failures, args.patience)
+                    inc_acc = accuracy(double_eval_result.incumbent_matches)
+                    cand_acc = accuracy(double_eval_result.candidate_matches)
+                    delta_actual = cand_acc - inc_acc
 
-            # Avancer le curseur au-delà de la fenêtre d'évaluation
-            # Les posts eval comptent dans la métrique finale via l'incumbent,
-            # car ce sont les prédictions effectivement "vécues" pendant la simu.
-            for match_record in double_eval_result.incumbent_records:
-                all_matches.append(match_record)
-                if match_record.match:
-                    matches_by_axis[match_record.axis] += 1
+                    # Compter les api calls de l'évaluation
+                    eval_api_count = len(eval_posts) * 4 * 2  # 4 agents × 2 runs (rough)
+                    total_api_calls += eval_api_count
 
-            n_processed += len(eval_posts)
-            cursor = eval_end
+                    promoted = cand_acc >= inc_acc + args.delta
+                    if args.no_rollback:
+                        promoted = cand_acc > inc_acc  # ablation A5 : promote si strictement mieux
 
-            error_buffer.clear()
+                    store_rewrite_log(
+                        conn,
+                        prompt_before_id=prompt_state.db_ids[current_key],
+                        prompt_after_id=candidate_id,
+                        error_batch=[{
+                            "axis": e.axis,
+                            "predicted": e.predicted,
+                            "expected": e.expected,
+                            "ig_media_id": e.ig_media_id,
+                            "post_scope": e.post_scope,
+                        } for e in target_errors],
+                        rewriter_reasoning=rewrite_result.reasoning,
+                        accepted=promoted,
+                        simulation_run_id=run_id,
+                        target_agent=target_agent,
+                        target_scope=target_scope,
+                        incumbent_accuracy=inc_acc,
+                        candidate_accuracy=cand_acc,
+                        eval_sample_size=len(eval_posts),
+                        iteration=rewrite_count,
+                    )
 
-            # Patience épuisée ?
-            if consecutive_failures >= args.patience:
-                log.info("[STOP] Patience épuisée (%d/%d). Poursuite sans rewrite.",
-                         consecutive_failures, args.patience)
-                rewrites_stopped = True
+                    if promoted:
+                        retire_prompt(conn, prompt_state.db_ids[current_key])
+                        activate_prompt(conn, candidate_id)
 
-    print()  # newline finale
+                        prompt_state.instructions[current_key] = rewrite_result.new_instructions
+                        prompt_state.db_ids[current_key] = candidate_id
+                        prompt_state.versions[current_key] = new_version
+                        consecutive_failures = 0
 
-    # ── 8. Métriques finales ──
-    acc_cat = matches_by_axis["category"] / n_processed if n_processed else 0
-    acc_vf = matches_by_axis["visual_format"] / n_processed if n_processed else 0
-    acc_str = matches_by_axis["strategy"] / n_processed if n_processed else 0
+                        log.info("[REWRITE #%d] Incumbent %.1f%% vs Candidate %.1f%% (Δ=+%.1f%%)",
+                                 rewrite_count, inc_acc * 100, cand_acc * 100, delta_actual * 100)
+                        log.info("[REWRITE #%d] >>> PROMOTED (v%d → v%d %s/%s) <<<",
+                                 rewrite_count, new_version - 1, new_version, target_agent, target_scope or "all")
+                    else:
+                        consecutive_failures += 1
+                        log.info("[REWRITE #%d] Incumbent %.1f%% vs Candidate %.1f%% (Δ=%.1f%%)",
+                                 rewrite_count, inc_acc * 100, cand_acc * 100, delta_actual * 100)
+                        log.info("[REWRITE #%d] <<< ROLLBACK (patience %d/%d) <<<",
+                                 rewrite_count, consecutive_failures, args.patience)
 
-    total_promotions = sum(1 for k, v in prompt_state.versions.items() if v > 0)
+                    for match_record in double_eval_result.incumbent_records:
+                        all_matches.append(match_record)
+                        if match_record.match:
+                            matches_by_axis[match_record.axis] += 1
 
-    finish_run(conn, run_id, {
-        "accuracy_category": acc_cat,
-        "accuracy_visual_format": acc_vf,
-        "accuracy_strategy": acc_str,
-        "prompt_iterations": rewrite_count,
-        "total_api_calls": total_api_calls,
-    })
+                    n_processed += len(eval_posts)
+                    cursor = eval_end
+                    error_buffer.clear()
+                except LLMCallError as exc:
+                    failed_rewrite_attempts += 1
+                    consecutive_failures += 1
+                    log.warning(
+                        "[REWRITE #%d] Échec pour %s/%s après retries. Buffer reset: %s",
+                        rewrite_count, target_agent, target_scope or "all", exc,
+                    )
+                    error_buffer.clear()
 
-    elapsed = time.monotonic() - t0
+                if consecutive_failures >= args.patience:
+                    log.info("[STOP] Patience épuisée (%d/%d). Poursuite sans rewrite.",
+                             consecutive_failures, args.patience)
+                    rewrites_stopped = True
 
-    log.info("")
-    log.info("=" * 60)
-    log.info("  RÉSULTATS SIMULATION HILPO")
-    log.info("=" * 60)
-    log.info("  Posts          : %d", n_processed)
-    log.info("  Appels API     : %d", total_api_calls)
-    log.info("  Durée          : %.0fs (%.1f min)", elapsed, elapsed / 60)
-    log.info("")
-    log.info("  Prompts finaux :")
-    for (agent, scope), version in sorted(prompt_state.versions.items()):
-        log.info("    %s/%s : v%d", agent, scope or "all", version)
-    log.info("")
-    log.info("  Rewrites       : %d tentés, %d promus",
-             rewrite_count, sum(1 for k, v in prompt_state.versions.items() if v > 0))
-    log.info("")
-    log.info("  Accuracy (tout le dev) :")
-    log.info("    Catégorie      : %.1f%% (%d/%d)", acc_cat * 100, matches_by_axis["category"], n_processed)
-    log.info("    Visual_format  : %.1f%% (%d/%d)", acc_vf * 100, matches_by_axis["visual_format"], n_processed)
-    log.info("    Stratégie      : %.1f%% (%d/%d)", acc_str * 100, matches_by_axis["strategy"], n_processed)
-    log.info("")
-    log.info("  simulation_run_id = %d", run_id)
-    log.info("✓ Simulation terminée")
+        print()  # newline finale
 
-    conn.close()
+        metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)
+        finish_run(conn, run_id, metrics)
+
+        elapsed = time.monotonic() - t0
+
+        log.info("")
+        log.info("=" * 60)
+        log.info("  RÉSULTATS SIMULATION HILPO")
+        log.info("=" * 60)
+        log.info("  Posts scorés   : %d", n_processed)
+        log.info("  Posts ignorés  : %d (échec LLM après retries)", skipped_classification_posts)
+        log.info("  Appels API     : %d", total_api_calls)
+        log.info("  Durée          : %.0fs (%.1f min)", elapsed, elapsed / 60)
+        log.info("  Coût live est. : ~$%.2f (monitoring only, non reporté)", live_cost_estimate_usd)
+        log.info("")
+        log.info("  Prompts finaux :")
+        for (agent, scope), version in sorted(prompt_state.versions.items()):
+            log.info("    %s/%s : v%d", agent, scope or "all", version)
+        log.info("")
+        log.info("  Rewrites       : %d tentés, %d promus, %d échoués",
+                 rewrite_count,
+                 sum(prompt_state.versions.values()),
+                 failed_rewrite_attempts)
+        log.info("")
+        log.info("  Accuracy (tout le dev scoré) :")
+        log.info("    Catégorie      : %.1f%% (%d/%d)", metrics["accuracy_category"] * 100, matches_by_axis["category"], n_processed)
+        log.info("    Visual_format  : %.1f%% (%d/%d)", metrics["accuracy_visual_format"] * 100, matches_by_axis["visual_format"], n_processed)
+        log.info("    Stratégie      : %.1f%% (%d/%d)", metrics["accuracy_strategy"] * 100, matches_by_axis["strategy"], n_processed)
+        log.info("")
+        log.info("  simulation_run_id = %d", run_id)
+        log.info("✓ Simulation terminée")
+    except Exception as exc:
+        print()
+        log.exception("[FATAL] Simulation interrompue: %s", exc)
+        if run_id is not None:
+            metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)
+            fail_run(conn, run_id, str(exc), metrics)
+            log.info("  simulation_run_id = %d", run_id)
+        raise
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

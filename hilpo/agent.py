@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
 from openai import OpenAI
 
+from hilpo.errors import LLMCallError
 from hilpo.schemas import DescriptorFeatures
+
+log = logging.getLogger("hilpo")
+
+MAX_SYNC_RETRIES = 3
+
+
+def _sleep_before_retry(attempt: int) -> None:
+    """Backoff exponentiel simple pour les appels sync."""
+    time.sleep(2 ** attempt)
 
 
 # ── Descripteur multimodal ─────────────────────────────────────
@@ -87,33 +98,50 @@ def call_descriptor(
     response_schema = DescriptorFeatures.model_json_schema()
 
     start = time.monotonic()
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "descriptor_features",
-                "strict": True,
-                "schema": response_schema,
-            },
-        },
-        temperature=0.1,
-    )
-    latency_ms = int((time.monotonic() - start) * 1000)
+    last_error: Exception | None = None
 
-    raw = response.choices[0].message.content
-    features = DescriptorFeatures.model_validate_json(raw)
+    for attempt in range(MAX_SYNC_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "descriptor_features",
+                        "strict": True,
+                        "schema": response_schema,
+                    },
+                },
+                temperature=0.1,
+            )
 
-    usage = response.usage
-    api_usage = {
-        "input_tokens": usage.prompt_tokens if usage else 0,
-        "output_tokens": usage.completion_tokens if usage else 0,
-        "latency_ms": latency_ms,
-        "model": model,
-    }
+            if not response.choices:
+                raise RuntimeError("Descriptor: réponse vide")
 
-    return features, api_usage
+            raw = response.choices[0].message.content
+            if not raw:
+                raise RuntimeError("Descriptor: content vide")
+
+            features = DescriptorFeatures.model_validate_json(raw)
+            latency_ms = int((time.monotonic() - start) * 1000)
+            usage = response.usage
+            api_usage = {
+                "input_tokens": usage.prompt_tokens if usage else 0,
+                "output_tokens": usage.completion_tokens if usage else 0,
+                "latency_ms": latency_ms,
+                "model": model,
+            }
+            return features, api_usage
+        except Exception as exc:
+            last_error = exc
+            log.warning("Descriptor appel échoué (attempt %d/%d): %s",
+                        attempt + 1, MAX_SYNC_RETRIES, exc)
+            if attempt < MAX_SYNC_RETRIES - 1:
+                _sleep_before_retry(attempt)
+                continue
+
+    raise LLMCallError("Descriptor: épuisé les retries") from last_error
 
 
 # ── Classifieur text-only (tool use avec enum fermé) ──────────
@@ -203,34 +231,50 @@ def call_classifier(
     tool = build_classifier_tool(axis, labels)
 
     start = time.monotonic()
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=[tool],
-        tool_choice="auto",
-        temperature=0.1,
-    )
-    latency_ms = int((time.monotonic() - start) * 1000)
+    last_error: Exception | None = None
 
-    # Extraire le tool call
-    choice = response.choices[0]
-    if choice.message.tool_calls:
-        tool_call = choice.message.tool_calls[0]
-        result = json.loads(tool_call.function.arguments)
-        label = result["label"]
-        confidence = result.get("confidence", "medium")
-    else:
-        # Fallback : le modèle a répondu en texte libre
-        raw_text = choice.message.content or ""
-        label = raw_text.strip().split("\n")[0].strip()
-        confidence = "low"
+    for attempt in range(MAX_SYNC_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=[tool],
+                tool_choice="auto",
+                temperature=0.1,
+            )
 
-    usage = response.usage
-    api_usage = {
-        "input_tokens": usage.prompt_tokens if usage else 0,
-        "output_tokens": usage.completion_tokens if usage else 0,
-        "latency_ms": latency_ms,
-        "model": model,
-    }
+            if not response.choices:
+                raise RuntimeError(f"Classifier {axis}: réponse vide")
 
-    return label, confidence, api_usage
+            choice = response.choices[0]
+            if choice.message.tool_calls:
+                tool_call = choice.message.tool_calls[0]
+                result = json.loads(tool_call.function.arguments)
+                label = result["label"]
+                confidence = result.get("confidence", "medium")
+            else:
+                raw_text = choice.message.content or ""
+                label = raw_text.strip().split("\n")[0].strip()
+                confidence = "low"
+
+            if label not in labels:
+                raise RuntimeError(f"Classifier {axis}: label invalide '{label}'")
+
+            latency_ms = int((time.monotonic() - start) * 1000)
+            usage = response.usage
+            api_usage = {
+                "input_tokens": usage.prompt_tokens if usage else 0,
+                "output_tokens": usage.completion_tokens if usage else 0,
+                "latency_ms": latency_ms,
+                "model": model,
+            }
+            return label, confidence, api_usage
+        except Exception as exc:
+            last_error = exc
+            log.warning("Classifier %s appel échoué (attempt %d/%d): %s",
+                        axis, attempt + 1, MAX_SYNC_RETRIES, exc)
+            if attempt < MAX_SYNC_RETRIES - 1:
+                _sleep_before_retry(attempt)
+                continue
+
+    raise LLMCallError(f"Classifier {axis}: épuisé les retries") from last_error

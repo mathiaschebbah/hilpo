@@ -26,8 +26,8 @@
 - Prompt versionné en BDD avec CRUD + promotion/rollback
 - Batching d'erreurs (B=30) avant déclenchement du rewriter
 - **Simulation post-annotation** : l'humain annote d'abord, puis un script rejoue les annotations dans l'ordre et simule la boucle HILPO (équivalent au live sous les hypothèses du protocole)
-- Évaluation passive sur les posts suivants → promotion si accuracy ≥ ancienne
-- Critère d'arrêt : convergence (variation < 2% sur 3 dernières itérations)
+- Évaluation passive sur les `eval_window` posts suivants (bloc consommé pour l'évaluation, non réinjecté dans le buffer) → promotion si `accuracy(candidate) >= accuracy(incumbent) + delta`
+- Critère d'arrêt : `patience=3` rewrites consécutifs sans promotion (compteur global, pas par cible)
 - Ablations triviales : rejouer avec B=1, 10, 30, 50 sans ré-annoter
 - Contribution principale du mémoire
 - **Statut** : implémenté — rewriter.py + run_simulation.py fonctionnels, dry-run testé. En attente des annotations dev pour le run complet.

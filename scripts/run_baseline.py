@@ -1,7 +1,8 @@
-"""B0 — Baseline zero-shot v0 sur le split test.
+"""Évaluation HILPO sur le split test.
 
 Usage :
     .venv/bin/python scripts/run_baseline.py
+    .venv/bin/python scripts/run_baseline.py --prompts active
 
 Variables d'environnement (chargées depuis .env) :
     OPENROUTER_API_KEY          — clé API OpenRouter
@@ -11,6 +12,7 @@ Variables d'environnement (chargées depuis .env) :
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
@@ -22,6 +24,8 @@ from hilpo.async_inference import async_classify_batch
 from hilpo.db import (
     format_descriptions,
     get_conn,
+    get_active_prompt,
+    get_prompt_version,
     load_categories,
     load_post_media,
     load_strategies,
@@ -31,7 +35,6 @@ from hilpo.db import (
 )
 from hilpo.gcs import sign_all_posts_media
 from hilpo.inference import PostInput, PromptSet
-from hilpo.prompts_v0 import PROMPTS_V0
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,49 +88,59 @@ def finish_run(conn, run_id: int, metrics: dict):
     conn.commit()
 
 
-def ensure_prompts_v0(conn) -> dict[tuple[str, str | None], int]:
-    """Insère les prompts v0 s'ils n'existent pas, retourne le mapping (agent, scope) → id."""
-    existing = conn.execute(
-        "SELECT id, agent::text, scope::text, content FROM prompt_versions WHERE version = 0"
-    ).fetchall()
-    existing_map = {(r["agent"], r["scope"]): r for r in existing}
+def _load_prompt_record(conn, agent: str, scope: str | None, prompt_mode: str) -> dict:
+    """Charge un prompt depuis la BDD selon le mode demandé."""
+    if prompt_mode == "active":
+        row = get_active_prompt(conn, agent, scope)
+    else:
+        row = get_prompt_version(conn, agent, scope, version=0)
 
-    ids: dict[tuple[str, str | None], int] = {}
-    for (agent, scope), content in PROMPTS_V0.items():
-        key = (agent, scope)
-        if key in existing_map:
-            row = existing_map[key]
-            if row["content"] != content:
-                conn.execute(
-                    "UPDATE prompt_versions SET content = %s WHERE id = %s",
-                    (content, row["id"]),
-                )
-                log.info("  prompt v0 mis à jour : %s/%s", agent, scope or "all")
-            ids[key] = row["id"]
-        else:
-            row = conn.execute(
-                """
-                INSERT INTO prompt_versions (agent, scope, version, content, status)
-                VALUES (%s, %s, 0, %s, 'active')
-                RETURNING id
-                """,
-                (agent, scope, content),
-            ).fetchone()
-            ids[key] = row["id"]
-            log.info("  prompt v0 inséré : %s/%s (id=%d)", agent, scope or "all", row["id"])
-    conn.commit()
-    return ids
+    if row is None:
+        raise RuntimeError(
+            f"Prompt introuvable en BDD pour {agent}/{scope or 'all'} (mode={prompt_mode})."
+        )
+    return row
 
 
-def build_prompts(conn, scope: str) -> PromptSet:
+def load_prompt_bundle(
+    conn,
+    prompt_mode: str,
+) -> tuple[dict[tuple[str, str | None], dict], dict[tuple[str, str | None], int]]:
+    """Charge les prompts requis depuis la BDD."""
+    prompt_records: dict[tuple[str, str | None], dict] = {}
+    prompt_ids: dict[tuple[str, str | None], int] = {}
+
+    for key in (
+        ("descriptor", "FEED"),
+        ("descriptor", "REELS"),
+        ("category", None),
+        ("visual_format", "FEED"),
+        ("visual_format", "REELS"),
+        ("strategy", None),
+    ):
+        row = _load_prompt_record(conn, key[0], key[1], prompt_mode)
+        prompt_records[key] = row
+        prompt_ids[key] = row["id"]
+        log.info(
+            "  prompt chargé : %s/%s -> v%s (%s)",
+            key[0],
+            key[1] or "all",
+            row["version"],
+            row.get("status", "n/a"),
+        )
+
+    return prompt_records, prompt_ids
+
+
+def build_prompts(conn, scope: str, prompt_records: dict[tuple[str, str | None], dict]) -> PromptSet:
     vf = load_visual_formats(conn, scope)
     cats = load_categories(conn)
     strats = load_strategies(conn)
     return PromptSet(
-        descriptor_instructions=PROMPTS_V0[("descriptor", scope)],
-        category_instructions=PROMPTS_V0[("category", None)],
-        visual_format_instructions=PROMPTS_V0[("visual_format", scope)],
-        strategy_instructions=PROMPTS_V0[("strategy", None)],
+        descriptor_instructions=prompt_records[("descriptor", scope)]["content"],
+        category_instructions=prompt_records[("category", None)]["content"],
+        visual_format_instructions=prompt_records[("visual_format", scope)]["content"],
+        strategy_instructions=prompt_records[("strategy", None)]["content"],
         descriptor_descriptions=format_descriptions(vf),
         category_descriptions=format_descriptions(cats),
         visual_format_descriptions=format_descriptions(vf),
@@ -211,11 +224,22 @@ def store_results(conn, results, post_inputs, prompt_ids, run_id):
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="Évalue la pipeline HILPO sur le split test")
+    parser.add_argument(
+        "--prompts",
+        choices=("v0", "active"),
+        default="v0",
+        help="Jeu de prompts à charger depuis la BDD",
+    )
+    args = parser.parse_args()
+
     conn = get_conn()
     t0 = time.monotonic()
+    run_label = "B0" if args.prompts == "v0" else "BN"
+    prompt_label = "v0" if args.prompts == "v0" else "actifs"
 
     log.info("=" * 55)
-    log.info("B0 — Baseline zero-shot v0 sur split test")
+    log.info("%s — Évaluation %s sur split test", run_label, prompt_label)
     log.info("=" * 55)
 
     # 1. Posts test
@@ -235,9 +259,9 @@ async def main():
     # 2. Simulation run
     from hilpo.config import MODEL_DESCRIPTOR_FEED, MODEL_DESCRIPTOR_REELS, MODEL_CLASSIFIER
     run_id = create_run(conn, {
-        "name": "B0_baseline_v0_test",
+        "name": f"{run_label}_{args.prompts}_test",
         "split": "test",
-        "prompts": "v0",
+        "prompts": args.prompts,
         "models": {
             "descriptor_feed": MODEL_DESCRIPTOR_FEED,
             "descriptor_reels": MODEL_DESCRIPTOR_REELS,
@@ -271,10 +295,11 @@ async def main():
     log.info("Prêts : %d (FEED %d / REELS %d) — %d skippés", len(post_inputs), feed, reels, skipped)
 
     # 4. Prompts et labels
+    prompt_records, prompt_ids = load_prompt_bundle(conn, args.prompts)
     prompts_by_scope = {}
     labels_by_scope = {}
     for scope in ("FEED", "REELS"):
-        prompts_by_scope[scope] = build_prompts(conn, scope)
+        prompts_by_scope[scope] = build_prompts(conn, scope, prompt_records)
         labels_by_scope[scope] = build_labels(conn, scope)
 
     # 5. Classification async
@@ -311,7 +336,6 @@ async def main():
 
     # 6. Stockage BDD
     log.info("Stockage en BDD...")
-    prompt_ids = ensure_prompts_v0(conn)
     matches, total_api = store_results(conn, results, post_inputs, prompt_ids, run_id)
 
     # 7. Métriques
@@ -331,7 +355,7 @@ async def main():
 
     log.info("")
     log.info("=" * 55)
-    log.info("RÉSULTATS B0")
+    log.info("RÉSULTATS %s", run_label)
     log.info("=" * 55)
     log.info("  Posts          : %d", n)
     log.info("  Appels API     : %d", total_api)
@@ -343,7 +367,7 @@ async def main():
     log.info("  Accuracy stratégie     : %.1f%% (%d/%d)", acc["strategy"] * 100, matches["strategy"], n)
     log.info("")
     log.info("  simulation_run_id = %d", run_id)
-    log.info("✓ B0 terminé")
+    log.info("✓ %s terminé", run_label)
 
     conn.close()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 
@@ -10,6 +11,16 @@ from openai import OpenAI
 
 from hilpo.client import get_client
 from hilpo.config import MODEL_REWRITER
+from hilpo.errors import LLMCallError
+
+log = logging.getLogger("hilpo")
+
+MAX_SYNC_RETRIES = 3
+
+
+def _sleep_before_retry(attempt: int) -> None:
+    """Backoff exponentiel simple pour les appels sync."""
+    time.sleep(2 ** attempt)
 
 REWRITER_SYSTEM = """\
 Tu es un ingénieur prompt expert du pipeline de classification de contenus Instagram.
@@ -133,27 +144,50 @@ def rewrite_prompt(
 Analyse les erreurs et propose des instructions améliorées. Retourne un JSON avec `reasoning` et `new_instructions`."""
 
     t0 = time.perf_counter()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": REWRITER_SYSTEM},
-            {"role": "user", "content": user_content},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.3,
-    )
-    latency_ms = int((time.perf_counter() - t0) * 1000)
+    last_error: Exception | None = None
 
-    content = response.choices[0].message.content or "{}"
-    parsed = json.loads(content)
+    for attempt in range(MAX_SYNC_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": REWRITER_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+            )
 
-    return RewriteResult(
-        new_instructions=parsed.get("new_instructions", current_instructions),
-        reasoning=parsed.get("reasoning", ""),
-        target_agent=target_agent,
-        target_scope=target_scope,
-        model=model,
-        input_tokens=response.usage.prompt_tokens if response.usage else 0,
-        output_tokens=response.usage.completion_tokens if response.usage else 0,
-        latency_ms=latency_ms,
-    )
+            if not response.choices:
+                raise RuntimeError("Rewriter: réponse vide")
+
+            content = response.choices[0].message.content or ""
+            if not content:
+                raise RuntimeError("Rewriter: content vide")
+
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise RuntimeError("Rewriter: payload JSON invalide")
+            if "new_instructions" not in parsed:
+                raise RuntimeError("Rewriter: clé 'new_instructions' absente")
+
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return RewriteResult(
+                new_instructions=parsed.get("new_instructions", current_instructions),
+                reasoning=parsed.get("reasoning", ""),
+                target_agent=target_agent,
+                target_scope=target_scope,
+                model=model,
+                input_tokens=response.usage.prompt_tokens if response.usage else 0,
+                output_tokens=response.usage.completion_tokens if response.usage else 0,
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:
+            last_error = exc
+            log.warning("Rewriter appel échoué (attempt %d/%d): %s",
+                        attempt + 1, MAX_SYNC_RETRIES, exc)
+            if attempt < MAX_SYNC_RETRIES - 1:
+                _sleep_before_retry(attempt)
+                continue
+
+    raise LLMCallError("Rewriter: épuisé les retries") from last_error

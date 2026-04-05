@@ -123,6 +123,32 @@ def get_active_prompt(
     ).fetchone()
 
 
+def get_prompt_version(
+    conn: psycopg.Connection,
+    agent: str,
+    scope: str | None,
+    version: int,
+) -> dict | None:
+    """Retourne une version précise de prompt pour un agent × scope."""
+    if scope is None:
+        return conn.execute(
+            """
+            SELECT id, agent, scope, version, content, status
+            FROM prompt_versions
+            WHERE agent = %s::agent_type AND scope IS NULL AND version = %s
+            """,
+            (agent, version),
+        ).fetchone()
+    return conn.execute(
+        """
+        SELECT id, agent, scope, version, content, status
+        FROM prompt_versions
+        WHERE agent = %s::agent_type AND scope = %s::media_product_type AND version = %s
+        """,
+        (agent, scope, version),
+    ).fetchone()
+
+
 def insert_prompt_version(
     conn: psycopg.Connection,
     agent: str,

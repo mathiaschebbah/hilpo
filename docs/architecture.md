@@ -192,6 +192,31 @@ Le script de simulation parcourt les posts dev dans l'ordre de présentation. Le
 7. Reset du buffer d'erreurs, le cycle recommence
 8. **Arrêt** si `patience` rewrites consécutifs sans promotion, ou fin des posts dev
 
+#### Diagramme de flux
+
+```mermaid
+flowchart TD
+    A["Post dev x_i (presentation_order)"] --> B["Pipeline incumbent\nDescripteur -> 3 classifieurs"]
+    B --> C["Comparer aux annotations humaines"]
+    C --> D{"Erreur sur >= 1 axe ?"}
+    D -- "Non" --> E["Post suivant"]
+    D -- "Oui" --> F["Ajouter au buffer E_t"]
+    F --> G{"|E_t| >= B ?"}
+    G -- "Non" --> E
+    G -- "Oui" --> H["Sélectionner la cible du rewrite\n(agent/scope)"]
+    H --> I["Rewriter -> prompt candidate"]
+    I --> J["Double évaluation sur le bloc futur commun\nincumbent vs candidate"]
+    J --> K{"acc(candidate) >= acc(incumbent) + delta ?"}
+    K -- "Oui" --> L["Promotion du candidate"]
+    K -- "Non" --> M["Rollback"]
+    L --> N["Reset du buffer"]
+    M --> N
+    N --> O{"patience épuisée ?"}
+    O -- "Non" --> E
+    O -- "Oui" --> P["Poursuite sans rewrite"]
+    P --> E
+```
+
 #### Nombre de rewrites estimé (basé sur B0)
 
 | Axe | Taux d'erreur B0 | Rewrites estimés (1563 posts) |
@@ -201,6 +226,12 @@ Le script de simulation parcourt les posts dev dans l'ordre de présentation. Le
 | stratégie | ~6.5% | ~3 |
 
 Note : le rewriter peut optimiser le prompt du descripteur ET des classifieurs (2 niveaux d'optimisation).
+
+#### Arbitrages du protocole
+
+- **Fenêtre d'évaluation consommée** : les `eval_window` posts qui suivent un rewrite servent uniquement à comparer incumbent et candidate. Ils contribuent aux métriques de simulation, mais ne réalimentent pas le buffer d'erreurs. Avec `eval_window=30`, une quinzaine de rewrites consomme une part substantielle du split dev en évaluation passive plutôt qu'en apprentissage.
+- **Patience globale** : le compteur de `patience` est global à la simulation, pas par cible. Trois rewrites consécutifs sans promotion, même sur des cibles différentes, arrêtent toute nouvelle tentative de rewrite.
+- **Sélection de cible biaisée vers les axes dominants** : `pick_rewrite_target` favorise mécaniquement l'agent avec le plus d'erreurs observées. En pratique, `visual_format` sera plus souvent ciblé que `strategy`. Le descripteur n'est ciblé que lorsqu'un même post produit plusieurs erreurs downstream, ce qui sert de proxy pour un problème amont mais ne garantit pas qu'un prompt descripteur sera réécrit sur tous les runs.
 
 ### Évaluation
 
