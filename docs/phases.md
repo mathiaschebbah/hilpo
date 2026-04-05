@@ -18,15 +18,14 @@
 - Classifieurs : Qwen 3.5 Flash text-only, tool use avec enum fermé
 - Schema features JSON (résumé visuel libre + champs structurés)
 - 6 prompts v0 écrits à la main (2 descripteur + 3 classifieurs + 1 stratégie)
-- Le modèle prédit en parallèle de l'humain **sur le split dev**
-- L'humain annote les posts dev au fil de l'eau — chaque annotation est comparée à la prédiction du modèle
-- Mesure du taux d'accord → baseline
-- **Statut** : pipeline E2E fonctionnel (3/3 match sur premier test). 6 prompts v0 en BDD. Reste : batch async sur dev set, intégration live avec l'annotation.
+- B0 baseline : pipeline batch async sur le split test (437 posts)
+- **Statut** : pipeline E2E fonctionnel (3/3 match sur premier test). 6 prompts v0 en BDD. B0 en cours.
 
-## Phase 3 — Rewriter agentique
-- Agent rewriter qui propose de nouvelles versions du prompt
-- Prompt versionné en BDD avec CRUD
-- Batching d'erreurs (B=30) avant déclenchement
-- Évaluation passive sur les posts suivants
+## Phase 3 — Rewriter agentique + boucle live
+- Agent rewriter qui propose de nouvelles versions des instructions I_t
+- Prompt versionné en BDD avec CRUD + promotion/rollback
+- Batching d'erreurs (B=30) avant déclenchement du rewriter
+- **Intégration live** : chaque annotation dev déclenche une classification en background. Les erreurs s'accumulent et déclenchent le rewriter automatiquement.
+- Évaluation passive sur les posts suivants → promotion si accuracy ≥ ancienne
 - Contribution principale du mémoire
-- **Statut** : pas commencé
+- **Statut** : pas commencé — implémentation prévue lundi 6 matin

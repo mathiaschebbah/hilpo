@@ -147,13 +147,14 @@ Chaque agent a un prompt composé de deux blocs :
 | `I_t^(vf, REELS)` | Classifieur visual_format | REELS |
 | `I_t^(str)` | Classifieur stratégie | tous |
 
-### Flux d'annotation (Phase 1-2)
+### Flux d'annotation live (Phase 3)
 
-1. L'humain ouvre l'interface de swipe
+1. L'humain ouvre l'interface de swipe (split dev)
 2. Un post s'affiche avec les labels v0 (heuristique) pré-remplis
-3. L'humain confirme ou corrige → annotation stockée
-4. En parallèle (Phase 2+), le descripteur analyse le post → 3 classifieurs prédisent
-5. Comparaison annotation vs prédictions → match calculé
+3. L'humain confirme ou corrige → annotation stockée via POST /v1/annotations
+4. Le backend déclenche la classification en background : descripteur → 3 classifieurs
+5. Comparaison annotation vs prédictions → match auto-calculé par trigger
+6. Si erreur → ajoutée au buffer. Si |buffer| ≥ 30 → rewriter déclenché
 
 ### Boucle HILPO (Phase 3)
 
