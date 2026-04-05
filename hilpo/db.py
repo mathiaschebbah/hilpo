@@ -157,15 +157,16 @@ def insert_prompt_version(
     content: str,
     status: str = "active",
     parent_id: int | None = None,
+    simulation_run_id: int | None = None,
 ) -> int:
     """Insère une nouvelle version de prompt. Retourne l'id."""
     row = conn.execute(
         """
-        INSERT INTO prompt_versions (agent, scope, version, content, status, parent_id)
-        VALUES (%s, %s, %s, %s, %s::prompt_status, %s)
+        INSERT INTO prompt_versions (agent, scope, version, content, status, parent_id, simulation_run_id)
+        VALUES (%s, %s, %s, %s, %s::prompt_status, %s, %s)
         RETURNING id
         """,
-        (agent, scope, version, content, status, parent_id),
+        (agent, scope, version, content, status, parent_id, simulation_run_id),
     ).fetchone()
     conn.commit()
     return row["id"]
@@ -253,6 +254,30 @@ def activate_prompt(conn: psycopg.Connection, prompt_id: int) -> None:
         (prompt_id,),
     )
     conn.commit()
+
+
+def promote_prompt(
+    conn: psycopg.Connection,
+    agent: str,
+    scope: str | None,
+    new_id: int,
+) -> None:
+    """Retire tout prompt actif du slot et active le nouveau, dans une seule transaction."""
+    with conn.transaction():
+        conn.execute(
+            """
+            UPDATE prompt_versions
+            SET status = 'retired'::prompt_status
+            WHERE agent = %s::agent_type
+              AND scope IS NOT DISTINCT FROM %s::media_product_type
+              AND status = 'active'::prompt_status
+            """,
+            (agent, scope),
+        )
+        conn.execute(
+            "UPDATE prompt_versions SET status = 'active'::prompt_status WHERE id = %s",
+            (new_id,),
+        )
 
 
 # ── Rewrite logs ──────────────────────────────────────────────

@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 
 from hilpo.config import MODEL_REWRITER
 from hilpo.db import (
-    activate_prompt,
     format_descriptions,
     get_conn,
     insert_prompt_version,
@@ -34,7 +33,7 @@ from hilpo.db import (
     load_post_media,
     load_strategies,
     load_visual_formats,
-    retire_prompt,
+    promote_prompt,
     store_api_call,
     store_prediction,
     store_rewrite_log,
@@ -771,11 +770,21 @@ def main():
                 try:
                     # Descriptions pour le scope de la cible
                     effective_scope = target_scope or "FEED"  # fallback pour category/strategy
-                    all_descs = format_descriptions(
-                        load_visual_formats(conn, effective_scope) if target_agent in ("visual_format", "descriptor")
-                        else load_categories(conn) if target_agent == "category"
-                        else load_strategies(conn)
-                    )
+                    if target_agent == "descriptor":
+                        all_descs = (
+                            "## Formats visuels\n\n"
+                            + format_descriptions(load_visual_formats(conn, effective_scope))
+                            + "\n\n## Catégories\n\n"
+                            + format_descriptions(load_categories(conn))
+                            + "\n\n## Stratégies\n\n"
+                            + format_descriptions(load_strategies(conn))
+                        )
+                    else:
+                        all_descs = format_descriptions(
+                            load_visual_formats(conn, effective_scope) if target_agent == "visual_format"
+                            else load_categories(conn) if target_agent == "category"
+                            else load_strategies(conn)
+                        )
 
                     log.info("[REWRITE #%d] Appel rewriter (%s)...", rewrite_count, args.rewriter_model)
                     current_key = (target_agent, target_scope)
@@ -806,6 +815,7 @@ def main():
                         rewrite_result.new_instructions,
                         status="draft",
                         parent_id=prompt_state.db_ids[current_key],
+                        simulation_run_id=run_id,
                     )
 
                     eval_end = min(cursor + args.eval_window, total)
@@ -858,8 +868,7 @@ def main():
                     )
 
                     if promoted:
-                        retire_prompt(conn, prompt_state.db_ids[current_key])
-                        activate_prompt(conn, candidate_id)
+                        promote_prompt(conn, target_agent, target_scope, candidate_id)
 
                         prompt_state.instructions[current_key] = rewrite_result.new_instructions
                         prompt_state.db_ids[current_key] = candidate_id
