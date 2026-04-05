@@ -1,6 +1,6 @@
 # HILPO — Human-In-the-Loop Prompt Optimization
 
-> Version **2.13** — 2026-04-05
+> Version **2.14** — 2026-04-05
 
 ## Double dimension du projet
 
@@ -20,6 +20,7 @@
 - [Reproduire](REPRODUCE.md) — guide de reproduction des résultats (jury/reviewers)
 - [Conventions](docs/conventions.md) — règles de collaboration et standards
 - [Planning](docs/planning.md) — calendrier jour par jour avec creneaux, 5-18 avril 2026
+- [Perspective agent](docs/agent_perspective.md) — snapshots datés de l'état de compréhension de l'agent
 
 ## Monorepo
 
@@ -45,6 +46,7 @@ hilpo/                 ← repo root
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 2.14 | 2026-04-05 | Agent perspective (snapshot + hook PostToolUse auto), hooks PreToolUse→PostToolUse (non bloquant) |
 | 2.13 | 2026-04-05 | 4e axe positionnement : transfert zero-shot via descriptions, métrique formats vus vs jamais vus |
 | 2.12 | 2026-04-05 | Flag "pas sûr" (touche d), colonne doubtful, filtre/pastille dans grille, re-annotation rapide |
 | 2.11 | 2026-04-05 | Ordre test-first, badge dev/test dans UI, filtre split, re-annotation posts test via grille, GET /posts/{id} |
