@@ -2,77 +2,85 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+
+class StrictBaseModel(BaseModel):
+    """Base model avec schéma strict pour les structured outputs."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # ── Features extraites par le descripteur ──────────────────────
 
 
-class TexteOverlay(BaseModel):
-    present: bool = False
-    type: str | None = None  # actualite, citation, chiffre, titre_editorial, liste_numerotee, annotation, description_produit
-    contenu_resume: str | None = None
+class TexteOverlay(StrictBaseModel):
+    present: bool
+    type: str | None  # actualite, citation, chiffre, titre_editorial, liste_numerotee, annotation, description_produit
+    contenu_resume: str | None
 
 
-class Logos(BaseModel):
-    views: bool = False
-    specifique: str | None = None  # BLUEPRINT, MOODY_MONDAY, MOODY_SUNDAY, REWIND, 9_PIECES, THROWBACK, VIEWS_ESSENTIALS, VIEWS_RESEARCH, VIEWS_TV
-    marque_partenaire: str | None = None
+class Logos(StrictBaseModel):
+    views: bool
+    specifique: str | None  # BLUEPRINT, MOODY_MONDAY, MOODY_SUNDAY, REWIND, 9_PIECES, THROWBACK, VIEWS_ESSENTIALS, VIEWS_RESEARCH, VIEWS_TV
+    marque_partenaire: str | None
 
 
-class MiseEnPage(BaseModel):
-    fond: str | None = None  # photo_plein_cadre, couleur_unie, texture, collage, split_screen
-    nombre_slides: int = 1
-    structure: str | None = None  # slide_unique, gabarit_repete, opener_contenu_closer, collage_grille
+class MiseEnPage(StrictBaseModel):
+    fond: str | None  # photo_plein_cadre, couleur_unie, texture, collage, split_screen
+    nombre_slides: int
+    structure: str | None  # slide_unique, gabarit_repete, opener_contenu_closer, collage_grille
 
 
-class ContenuPrincipal(BaseModel):
-    personnes_visibles: bool = False
-    type_personne: str | None = None  # artiste, athlete, personnalite, anonyme
-    screenshots_film: bool = False
-    pochettes_album: bool = False
-    zoom_objet: bool = False
-    photos_evenement: bool = False
+class ContenuPrincipal(StrictBaseModel):
+    personnes_visibles: bool
+    type_personne: str | None  # artiste, athlete, personnalite, anonyme
+    screenshots_film: bool
+    pochettes_album: bool
+    zoom_objet: bool
+    photos_evenement: bool
 
 
-class AudioVideo(BaseModel):
-    voix_off_narrative: bool = False
-    interview_face_camera: bool = False
-    musique_dominante: bool = False
-    type_montage: str | None = None  # captation_live, montage_edite, face_camera, b_roll_narration
+class AudioVideo(StrictBaseModel):
+    voix_off_narrative: bool
+    interview_face_camera: bool
+    musique_dominante: bool
+    type_montage: str | None  # captation_live, montage_edite, face_camera, b_roll_narration
 
 
-class AnalyseCaption(BaseModel):
-    longueur: int = 0
-    mentions_marques: list[str] = []
-    hashtags_format: str | None = None
-    mention_partenariat: bool = False
-    sujet_resume: str | None = None
+class AnalyseCaption(StrictBaseModel):
+    longueur: int
+    mentions_marques: list[str]
+    hashtags_format: str | None
+    mention_partenariat: bool
+    sujet_resume: str | None
 
 
-class IndicesBrandContent(BaseModel):
-    produit_mis_en_avant: bool = False
-    mention_partenariat_caption: bool = False
-    logo_marque_commerciale: bool = False
+class IndicesBrandContent(StrictBaseModel):
+    produit_mis_en_avant: bool
+    mention_partenariat_caption: bool
+    logo_marque_commerciale: bool
 
 
-class DescriptorFeatures(BaseModel):
+class DescriptorFeatures(StrictBaseModel):
     """Output structuré du descripteur multimodal."""
 
     resume_visuel: str
-    texte_overlay: TexteOverlay = TexteOverlay()
-    logos: Logos = Logos()
-    mise_en_page: MiseEnPage = MiseEnPage()
-    contenu_principal: ContenuPrincipal = ContenuPrincipal()
-    audio_video: AudioVideo = AudioVideo()
-    analyse_caption: AnalyseCaption = AnalyseCaption()
-    indices_brand_content: IndicesBrandContent = IndicesBrandContent()
+    texte_overlay: TexteOverlay
+    logos: Logos
+    mise_en_page: MiseEnPage
+    contenu_principal: ContenuPrincipal
+    audio_video: AudioVideo
+    analyse_caption: AnalyseCaption
+    indices_brand_content: IndicesBrandContent
 
 
 # ── Résultat de classification d'un post ───────────────────────
 
 
-class PostPrediction(BaseModel):
+class PostPrediction(StrictBaseModel):
     """Prédictions pour un post (3 axes)."""
 
     ig_media_id: int
@@ -80,3 +88,57 @@ class PostPrediction(BaseModel):
     visual_format: str
     strategy: str
     features: DescriptorFeatures
+
+
+class RewritePayload(StrictBaseModel):
+    """Payload structuré attendu du rewriter."""
+
+    reasoning: str
+    new_instructions: str
+
+    @field_validator("reasoning", "new_instructions")
+    @classmethod
+    def validate_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+def build_json_schema_response_format(name: str, schema: dict) -> dict:
+    """Construit un response_format json_schema strict pour chat.completions."""
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
+def build_classifier_response_schema(labels: list[str]) -> dict:
+    """Schéma strict de sortie pour un classifieur HILPO."""
+
+    return {
+        "type": "object",
+        "properties": {
+            "label": {
+                "type": "string",
+                "enum": labels,
+            },
+            "confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+            },
+        },
+        "required": ["label", "confidence"],
+        "additionalProperties": False,
+    }
+
+
+class ClassifierDecision(StrictBaseModel):
+    """Décision structurée d'un classifieur."""
+
+    label: str
+    confidence: Literal["high", "medium", "low"]

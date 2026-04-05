@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from typing import Any
 
 from openai import OpenAI
 
 from hilpo.errors import LLMCallError
-from hilpo.schemas import DescriptorFeatures
+from hilpo.schemas import (
+    ClassifierDecision,
+    DescriptorFeatures,
+    build_classifier_response_schema,
+    build_json_schema_response_format,
+)
 
 log = logging.getLogger("hilpo")
 
@@ -94,8 +97,10 @@ def call_descriptor(
         instructions, descriptions_taxonomiques,
     )
 
-    # Schema JSON pour structured output
-    response_schema = DescriptorFeatures.model_json_schema()
+    response_format = build_json_schema_response_format(
+        "descriptor_features",
+        DescriptorFeatures.model_json_schema(),
+    )
 
     start = time.monotonic()
     last_error: Exception | None = None
@@ -105,14 +110,7 @@ def call_descriptor(
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "descriptor_features",
-                        "strict": True,
-                        "schema": response_schema,
-                    },
-                },
+                response_format=response_format,
                 temperature=0.1,
             )
 
@@ -144,43 +142,16 @@ def call_descriptor(
     raise LLMCallError("Descriptor: épuisé les retries") from last_error
 
 
-# ── Classifieur text-only (tool use avec enum fermé) ──────────
+# ── Classifieur text-only (structured output strict) ───────────
 
 
-def build_classifier_tool(
-    axis: str,
-    labels: list[str],
-) -> dict:
-    """Construit la définition du tool pour un classifieur.
+def parse_classifier_response(raw: str, axis: str, labels: list[str]) -> tuple[str, str]:
+    """Valide la sortie structurée d'un classifieur."""
 
-    Args:
-        axis: Nom de l'axe (category, visual_format, strategy).
-        labels: Liste des labels valides (enum fermé).
-    """
-    return {
-        "type": "function",
-        "function": {
-            "name": f"classify_{axis}",
-            "description": f"Classifie le post sur l'axe '{axis}'.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "label": {
-                        "type": "string",
-                        "enum": labels,
-                        "description": f"Le label {axis} prédit.",
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["high", "medium", "low"],
-                        "description": "Niveau de confiance.",
-                    },
-                },
-                "required": ["label", "confidence"],
-                "additionalProperties": False,
-            },
-        },
-    }
+    parsed = ClassifierDecision.model_validate_json(raw)
+    if parsed.label not in labels:
+        raise RuntimeError(f"Classifier {axis}: label invalide '{parsed.label}'")
+    return parsed.label, parsed.confidence
 
 
 def build_classifier_messages(
@@ -228,7 +199,10 @@ def call_classifier(
         features_json, caption,
         instructions, descriptions_taxonomiques,
     )
-    tool = build_classifier_tool(axis, labels)
+    response_format = build_json_schema_response_format(
+        f"{axis}_classification",
+        build_classifier_response_schema(labels),
+    )
 
     start = time.monotonic()
     last_error: Exception | None = None
@@ -238,27 +212,18 @@ def call_classifier(
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                tools=[tool],
-                tool_choice="auto",
+                response_format=response_format,
                 temperature=0.1,
             )
 
             if not response.choices:
                 raise RuntimeError(f"Classifier {axis}: réponse vide")
 
-            choice = response.choices[0]
-            if choice.message.tool_calls:
-                tool_call = choice.message.tool_calls[0]
-                result = json.loads(tool_call.function.arguments)
-                label = result["label"]
-                confidence = result.get("confidence", "medium")
-            else:
-                raw_text = choice.message.content or ""
-                label = raw_text.strip().split("\n")[0].strip()
-                confidence = "low"
+            raw = response.choices[0].message.content or ""
+            if not raw:
+                raise RuntimeError(f"Classifier {axis}: content vide")
 
-            if label not in labels:
-                raise RuntimeError(f"Classifier {axis}: label invalide '{label}'")
+            label, confidence = parse_classifier_response(raw, axis, labels)
 
             latency_ms = int((time.monotonic() - start) * 1000)
             usage = response.usage

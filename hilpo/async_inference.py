@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -18,10 +16,19 @@ from hilpo.config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
 )
-from hilpo.agent import build_classifier_messages, build_classifier_tool, build_descriptor_messages
+from hilpo.agent import (
+    build_classifier_messages,
+    build_descriptor_messages,
+    parse_classifier_response,
+)
 from hilpo.inference import ApiCallLog, PostInput, PromptSet, PipelineResult
 from hilpo.router import route
-from hilpo.schemas import DescriptorFeatures, PostPrediction
+from hilpo.schemas import (
+    DescriptorFeatures,
+    PostPrediction,
+    build_classifier_response_schema,
+    build_json_schema_response_format,
+)
 
 
 def get_async_client() -> AsyncOpenAI:
@@ -44,7 +51,10 @@ async def async_call_descriptor(
         media_urls, media_types, caption,
         instructions, descriptions_taxonomiques,
     )
-    response_schema = DescriptorFeatures.model_json_schema()
+    response_format = build_json_schema_response_format(
+        "descriptor_features",
+        DescriptorFeatures.model_json_schema(),
+    )
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -54,14 +64,7 @@ async def async_call_descriptor(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "descriptor_features",
-                            "strict": True,
-                            "schema": response_schema,
-                        },
-                    },
+                    response_format=response_format,
                     temperature=0.1,
                 )
             except Exception as e:
@@ -87,7 +90,14 @@ async def async_call_descriptor(
                 continue
             raise RuntimeError("Descriptor: content vide après retries")
 
-        features = DescriptorFeatures.model_validate_json(raw)
+        try:
+            features = DescriptorFeatures.model_validate_json(raw)
+        except Exception as e:
+            log.warning("Descriptor JSON invalide (attempt %d): %s", attempt + 1, e)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise RuntimeError("Descriptor: JSON invalide après retries") from e
         usage = response.usage
 
         api_log = ApiCallLog(
@@ -116,7 +126,10 @@ async def async_call_classifier(
     messages = build_classifier_messages(
         features_json, caption, instructions, descriptions_taxonomiques,
     )
-    tool = build_classifier_tool(axis, labels)
+    response_format = build_json_schema_response_format(
+        f"{axis}_classification",
+        build_classifier_response_schema(labels),
+    )
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -126,8 +139,7 @@ async def async_call_classifier(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    tools=[tool],
-                    tool_choice="auto",
+                    response_format=response_format,
                     temperature=0.1,
                 )
             except Exception as e:
@@ -145,16 +157,22 @@ async def async_call_classifier(
                 continue
             raise RuntimeError(f"Classifier {axis}: réponse vide après retries")
 
-        choice = response.choices[0]
-        if choice.message.tool_calls:
-            tool_call = choice.message.tool_calls[0]
-            result = json.loads(tool_call.function.arguments)
-            label = result["label"]
-            confidence = result.get("confidence", "medium")
-        else:
-            raw_text = choice.message.content or ""
-            label = raw_text.strip().split("\n")[0].strip()
-            confidence = "low"
+        raw = response.choices[0].message.content or ""
+        if not raw:
+            log.warning("Classifier %s content vide (attempt %d)", axis, attempt + 1)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"Classifier {axis}: content vide après retries")
+
+        try:
+            label, confidence = parse_classifier_response(raw, axis, labels)
+        except Exception as e:
+            log.warning("Classifier %s JSON invalide (attempt %d): %s", axis, attempt + 1, e)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"Classifier {axis}: JSON invalide après retries") from e
 
         usage = response.usage
         api_log = ApiCallLog(

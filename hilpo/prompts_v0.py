@@ -10,7 +10,7 @@ Ton rôle : observer attentivement TOUTES les slides/images/vidéos du post et e
 ## Consignes
 
 1. Regarde CHAQUE slide du carousel (pas seulement la première).
-2. Remplis le JSON structuré avec précision.
+2. Renseigne chaque champ demandé avec précision.
 3. Pour `resume_visuel`, écris une description libre, détaillée et insightful de ce que tu observes. Mentionne les éléments distinctifs : gabarits, typographie, logos, mise en page, style graphique.
 4. Sois factuel : décris ce que tu VOIS, pas ce que tu devines.
 5. La caption t'est fournie comme contexte — utilise-la pour confirmer tes observations visuelles (ex: hashtags, mentions de marques).
@@ -25,7 +25,7 @@ Ton rôle : observer attentivement la vidéo ET écouter l'audio du Reel, puis e
 
 1. Regarde la vidéo intégralement.
 2. Écoute l'audio : y a-t-il une voix off narrative ? Une interview ? De la musique dominante ?
-3. Remplis le JSON structuré avec précision. Les champs `audio_video` sont particulièrement importants pour les Reels.
+3. Renseigne chaque champ demandé avec précision. Les champs `audio_video` sont particulièrement importants pour les Reels.
 4. Pour `resume_visuel`, décris ce que tu vois ET ce que tu entends. Mentionne le type de montage, les éléments graphiques, les logos.
 5. Sois factuel : décris ce que tu VOIS et ENTENDS, pas ce que tu devines.
 6. La caption t'est fournie comme contexte — utilise-la pour confirmer tes observations.
@@ -43,7 +43,7 @@ Ton rôle : déterminer la catégorie éditoriale du post à partir des features
 1. Lis attentivement les features JSON et la caption.
 2. Le `sujet_resume` et le `domaine_detecte` dans les features sont des indices, mais vérifie avec la caption.
 3. Choisis la catégorie la plus spécifique. Par exemple, si un post parle d'un artiste musicien ET de mode, priorise la catégorie dominante du contenu.
-4. Utilise le tool `classify_category` pour retourner ta prédiction.
+4. Prends une décision nette et cohérente avec les descriptions de labels.
 """
 
 CLASSIFIER_VISUAL_FORMAT_FEED = """\
@@ -69,7 +69,7 @@ Ton rôle : déterminer le format visuel du post à partir des features extraite
 1. Regarde d'abord `texte_overlay.present` et `logos.specifique` — ce sont les critères les plus discriminants.
 2. Puis regarde `mise_en_page.structure` et `mise_en_page.fond`.
 3. En cas de doute entre deux formats, choisis celui dont la description correspond le mieux au `resume_visuel`.
-4. Utilise le tool `classify_visual_format` pour retourner ta prédiction.
+4. Prends une décision nette et cohérente avec les descriptions de labels.
 """
 
 CLASSIFIER_VISUAL_FORMAT_REELS = """\
@@ -95,7 +95,7 @@ Ton rôle : déterminer le format visuel du Reel à partir des features extraite
 
 1. Regarde d'abord `audio_video` — la voix off et le type de montage sont très discriminants pour les Reels.
 2. Puis `logos.specifique` et `texte_overlay`.
-3. Utilise le tool `classify_visual_format` pour retourner ta prédiction.
+3. Prends une décision nette et cohérente avec les descriptions de labels.
 """
 
 CLASSIFIER_STRATEGY = """\
@@ -121,7 +121,7 @@ Ton rôle : déterminer si le post est Organic (contenu éditorial Views) ou Bra
 1. La caption est le signal le plus fiable — cherche "en partenariat", "en collaboration", "sponsorisé", "publicité".
 2. Un post peut montrer un produit sans être Brand Content (ex: un article sur une marque ≠ un partenariat).
 3. En cas de doute, choisis Organic — le Brand Content est toujours explicitement identifié.
-4. Utilise le tool `classify_strategy` pour retourner ta prédiction.
+4. Prends une décision nette et cohérente avec les descriptions de labels.
 """
 
 # ── Index ──────────────────────────────────────────────────────

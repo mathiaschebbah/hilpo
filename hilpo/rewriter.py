@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from openai import OpenAI
 from hilpo.client import get_client
 from hilpo.config import MODEL_REWRITER
 from hilpo.errors import LLMCallError
+from hilpo.schemas import RewritePayload, build_json_schema_response_format
 
 log = logging.getLogger("hilpo")
 
@@ -40,7 +40,6 @@ Analyse les patterns d'erreur dans le batch et réécris les instructions pour c
 
 ## Contraintes
 
-- Retourne un JSON avec deux champs : `reasoning` (ton analyse) et `new_instructions` (les instructions complètes réécrites)
 - Les nouvelles instructions remplacent entièrement les anciennes (pas un diff)
 - Garde le même format et style que les instructions originales
 - Ne modifie PAS les descriptions taxonomiques (elles sont fixes)
@@ -141,10 +140,14 @@ def rewrite_prompt(
 
 ---
 
-Analyse les erreurs et propose des instructions améliorées. Retourne un JSON avec `reasoning` et `new_instructions`."""
+Analyse les erreurs et propose des instructions améliorées."""
 
     t0 = time.perf_counter()
     last_error: Exception | None = None
+    response_format = build_json_schema_response_format(
+        "rewriter_payload",
+        RewritePayload.model_json_schema(),
+    )
 
     for attempt in range(MAX_SYNC_RETRIES):
         try:
@@ -154,7 +157,7 @@ Analyse les erreurs et propose des instructions améliorées. Retourne un JSON a
                     {"role": "system", "content": REWRITER_SYSTEM},
                     {"role": "user", "content": user_content},
                 ],
-                response_format={"type": "json_object"},
+                response_format=response_format,
                 temperature=0.3,
             )
 
@@ -165,16 +168,12 @@ Analyse les erreurs et propose des instructions améliorées. Retourne un JSON a
             if not content:
                 raise RuntimeError("Rewriter: content vide")
 
-            parsed = json.loads(content)
-            if not isinstance(parsed, dict):
-                raise RuntimeError("Rewriter: payload JSON invalide")
-            if "new_instructions" not in parsed:
-                raise RuntimeError("Rewriter: clé 'new_instructions' absente")
+            payload = RewritePayload.model_validate_json(content)
 
             latency_ms = int((time.perf_counter() - t0) * 1000)
             return RewriteResult(
-                new_instructions=parsed.get("new_instructions", current_instructions),
-                reasoning=parsed.get("reasoning", ""),
+                new_instructions=payload.new_instructions,
+                reasoning=payload.reasoning,
                 target_agent=target_agent,
                 target_scope=target_scope,
                 model=model,
