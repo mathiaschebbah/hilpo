@@ -147,36 +147,47 @@ Chaque agent a un prompt composé de deux blocs :
 | `I_t^(vf, REELS)` | Classifieur visual_format | REELS |
 | `I_t^(str)` | Classifieur stratégie | tous |
 
-### Flux d'annotation live (Phase 3)
+### Flux d'annotation et simulation (Phase 3)
 
-1. L'humain ouvre l'interface de swipe (split dev)
-2. Un post s'affiche avec les labels v0 (heuristique) pré-remplis
-3. L'humain confirme ou corrige → annotation stockée via POST /v1/annotations
-4. Le backend déclenche la classification en background : descripteur → 3 classifieurs
-5. Comparaison annotation vs prédictions → match auto-calculé par trigger
-6. Si erreur → ajoutée au buffer. Si |buffer| ≥ 30 → rewriter déclenché
+L'annotation et l'optimisation sont **découplées** :
 
-### Boucle HILPO (Phase 3)
+1. **Annotation** : l'humain annote tous les posts dev via l'interface de swipe (rapide, pas d'attente modèle)
+2. **Simulation** : un script rejoue les annotations dans l'ordre de présentation (seed=42) et simule la boucle HILPO
 
-1. Tous les B=30 erreurs d'un agent, le rewriter se déclenche
-2. Le rewriter reçoit le prompt actif + le batch d'erreurs
-3. Il propose un nouveau prompt → stocké en **draft**
-4. Le draft devient le prompt actif pour les prochains posts (évaluation passive)
-5. Après 30 nouveaux posts annotés avec le draft, on compare :
-   - match rate du draft sur ses 30 posts vs match rate de l'ancien prompt sur ses 30 derniers posts
-   - Si draft ≥ ancien → **promotion** (draft devient active, ancien passe à retired)
-   - Sinon → **rollback** (ancien prompt restauré comme active, draft rejeté)
-6. Le buffer d'erreurs est réinitialisé, le cycle recommence
+Ce découplage est mathématiquement équivalent au live car :
+- Les annotations sont déterministes (déjà faites)
+- L'ordre de présentation est fixé (seed=42)
+- Le modèle est quasi-déterministe (temperature=0.1)
+- Le prompt évolue de la même façon
+
+**Avantage** : les ablations sont triviales — on rejoue la simulation avec B=1, 10, 30, 50 sans ré-annoter.
+
+### Boucle HILPO (simulation)
+
+Le script de simulation parcourt les posts dev dans l'ordre de présentation :
+
+1. Pour chaque post : descripteur → 3 classifieurs avec le prompt actif
+2. Comparaison prédiction vs annotation humaine
+3. Si erreur → ajoutée au buffer
+4. Si |buffer| ≥ B (défaut 30) → le rewriter se déclenche :
+   a. Il reçoit le prompt actif + le batch d'erreurs (avec features, descriptions, attendu vs observé)
+   b. Il propose un nouveau prompt → stocké en **draft**
+5. Le draft devient actif pour les prochains posts (évaluation passive)
+6. Après 30 posts classifiés avec le draft, on compare :
+   - match rate du draft vs match rate de l'ancien prompt sur ses 30 derniers posts
+   - Si draft ≥ ancien → **promotion** (draft active, ancien retired)
+   - Sinon → **rollback** (ancien restauré, draft rejeté)
+7. Le buffer d'erreurs est réinitialisé, le cycle recommence
+
+Critère d'arrêt : convergence (variation accuracy < 2% sur les 3 dernières itérations) ou fin des posts dev.
 
 Note : le rewriter peut optimiser le prompt du descripteur ET des classifieurs (2 niveaux d'optimisation).
 
-### Évaluation — aucune réévaluation pendant la boucle
+### Évaluation
 
-**Pendant la boucle (dev)** : la performance est mesurée passivement sur les posts annotés. Chaque post est classifié avec le prompt actif au moment de l'annotation. Le match (prédit vs annotation humaine) est calculé automatiquement par le trigger BDD. Il n'y a aucune réévaluation des posts passés — chaque post est classifié une seule fois.
+**Pendant la simulation (dev)** : chaque post est classifié avec le prompt actif à ce moment de la simulation. Le match est calculé automatiquement. La courbe de convergence se dessine en rolling window (fenêtre de 50 posts) en fonction du nombre de posts traités. Les moments de rewrite (v0 → v1 → v2...) sont annotés sur la courbe.
 
-**Courbe de convergence** : accuracy en rolling window (fenêtre de 50 posts) tracée en fonction du nombre d'annotations. Les moments de rewrite (v0 → v1 → v2...) sont annotés sur la courbe. Se dessine uniquement avec les données déjà en BDD (table `predictions`).
-
-**Évaluation finale (test)** : le prompt vN (dernier prompt actif) est évalué une seule fois sur les 437 posts test. C'est le seul moment où le test set est utilisé. Comparé au B0 (prompt v0 sur le même test set).
+**Évaluation finale (test)** : le prompt vN (dernier prompt actif après convergence) est évalué une seule fois sur les 437 posts test via le même script que le B0. Comparé au B0 (prompt v0 sur le même test set).
 
 ## Séparation backend / engine
 
@@ -223,32 +234,38 @@ L'humain annote **en aveugle** (sans voir la prédiction du modèle) pour évite
 - **h(x_i) ∈ Y_k** : annotation humaine pour le post x_i
 - **D(x_i, p_desc)** : sortie du descripteur — features JSON extraites du post x_i avec le prompt p_desc
 
-### Algorithme (avec descripteur)
+### Algorithme (simulation post-annotation)
+
+L'humain annote d'abord tous les posts dev. La simulation rejoue ensuite les annotations dans l'ordre de présentation et optimise le prompt.
 
 ```
-Entrée : D, B (batch size = 30), f_θ, I_0 (instructions initiales), Δ (descriptions fixes)
-Sortie : I_T (instructions optimisées), annotations {h(x_i)}
+Entree : D_dev = {(x_i, h(x_i))} posts dev annotes (presentation_order)
+         B (batch size = 30), f_theta, I_0 (instructions initiales), Delta (descriptions)
+Sortie : I_T (instructions optimisees)
 
-t ← 0
-E_t ← ∅                                  // buffer d'erreurs
+t = 0
+E_t = {}                                  // buffer d'erreurs
 
-Pour chaque post x_i présenté à l'humain :
-    1. Collecter h(x_i)                   // annotation humaine
-    2. features_i ← D(x_i, (I_t^desc, Δ^m))  // descripteur multimodal
-    3. Pour chaque axe k en parallèle :
-         ŷ_i^k ← f_θ(features_i, caption_i, (I_t^k, Δ^m))  // classifieur text-only
-    4. Si h(x_i) ≠ ŷ_i pour un axe k :
-         E_t ��� E_t ∪ {(x_i, features_i, h(x_i), ŷ_i)}
-    5. Si |E_t| ≥ B :
-         I_{t+1} ← R(I_t, E_t, Δ)       // rewriter : peut modifier desc + classifieurs
-         Si acc((I_{t+1}, Δ)) ≥ acc((I_t, Δ)) sur fenêtre de validation :
-             t ← t + 1                   // promotion
+Pour chaque post x_i dans l'ordre de presentation :
+    1. features_i = D(x_i, (I_t^desc, Delta^m))    // descripteur multimodal
+    2. Pour chaque axe k en parallele :
+         y_hat_i^k = f_theta(features_i, caption_i, (I_t^k, Delta^m))
+    3. Si h(x_i) != y_hat_i pour un axe k :
+         E_t = E_t + {(x_i, features_i, h(x_i), y_hat_i)}
+    4. Si |E_t| >= B :
+         I_{t+1} = R(I_t, E_t, Delta)              // rewriter
+         Evaluer I_{t+1} sur les 30 prochains posts (fenetre passive)
+         Si acc(I_{t+1}) >= acc(I_t) :
+             t = t + 1                              // promotion
          Sinon :
-             rejeter I_{t+1}             // rollback
-         E_t ← ∅                         // reset buffer
+             rejeter I_{t+1}                        // rollback
+         E_t = {}                                   // reset buffer
+    5. Critere d'arret : variation accuracy < 2% sur 3 iterations -> STOP
 
 Retourner I_t
 ```
+
+Note : les annotations h(x_i) sont pre-existantes. La simulation est mathematiquement equivalente au live car l'humain annote en aveugle (sans voir la prediction du modele).
 
 ### Propriétés à analyser
 

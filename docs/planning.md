@@ -22,28 +22,27 @@
 - ~~Script baseline B0 async~~ ✅
 - ~~B0 sur 437 posts test~~ ✅ (87.3% / 64.3% / 93.5%, $1.14)
 
-### Lun 6 — Phase 3 : rewriter + boucle HILPO + annotation live
+### Lun 6 — Phase 3 : rewriter + annotation dev
 | Créneau | Activité |
 |---------|----------|
-| Matin (3h) | Implémenter rewriter + boucle HILPO (loop.py, rewriter.py) |
-| Matin (1h) | Intégration live backend : POST annotation → classification background → accumulation erreurs |
-| Après-midi (4h) | Annoter ~400 posts dev AVEC la boucle active |
-| Soir (2h) | Vérifier premiers rewrites, debug |
+| Matin (3h) | Implémenter rewriter.py + loop.py (simulation, pas live) |
+| Après-midi (4h) | Annoter ~400-800 posts dev (rapide, pas d'attente modèle) |
+| Soir (2h) | Lancer simulation HILPO sur les posts annotés → premiers résultats |
 
-### Mar 7 — Annotation sprint + boucle active
+### Mar 7 — Annotation sprint
 | Créneau | Activité |
 |---------|----------|
-| Matin (3h) | Annoter 400 posts dev (boucle active, prompt évolue) |
+| Matin (3h) | Annoter 400 posts dev |
 | Après-midi (3h) | Annoter 400 posts dev |
-| Soir (2h) | Évaluer prompts v1/v2 générés |
+| Soir (2h) | Relancer simulation avec plus de données → vérifier convergence |
 
-### Mer 8 — Fin annotation dev
+### Mer 8 — Fin annotation + simulation finale
 | Créneau | Activité |
 |---------|----------|
 | Matin (3h) | Annoter derniers ~400 posts dev |
 | Après-midi (2h) | Kappa intra-annotateur (re-swipe 50 posts à l'aveugle) |
-| Après-midi (1h) | Éval finale : prompt vN vs v0 sur split test |
-| Soir (2h) | Analyser résultats, debug si nécessaire |
+| Après-midi (1h) | Simulation finale + éval vN sur test |
+| Soir (2h) | Analyser résultats, ablations (rejouer avec B=1, 10, 50) |
 
 ### Jeu 9 — Métriques + figures
 | Créneau | Activité |
@@ -113,11 +112,11 @@
 
 | Jour | Posts | Cumulé | Phase active |
 |------|-------|--------|--------------|
-| Lun 6 | 400 | 400 dev | Phase 3 live (boucle HILPO active) |
-| Mar 7 | 800 | 1200 dev | Phase 3 live |
-| Mer 8 | ~360 | ~1560 dev | Phase 3 live + éval finale |
+| Lun 6 | 400-800 | 400-800 dev | Annotation pure (rapide) + simulation le soir |
+| Mar 7 | 800 | 1200 dev | Annotation pure + simulation |
+| Mer 8 | ~360 | ~1560 dev | Fin annotation + simulation finale + éval test |
 
-Note : le split test (437) est déjà annoté. Les annotations dev se font avec la boucle HILPO active dès le premier post.
+Note : le split test (437) est déjà annoté. L'annotation dev est découplée de l'optimisation — on annote d'abord, on simule ensuite. Ablations triviales (rejouer avec différents B).
 
 ## Appels API estimés
 

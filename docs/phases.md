@@ -21,11 +21,13 @@
 - B0 baseline : pipeline batch async sur le split test (437 posts)
 - **Statut** : ✅ terminée — B0 exécuté sur 434/437 posts test (3 échoués). Résultats : catégorie 87.3%, visual_format 64.3%, stratégie 93.5%. Coût : $1.14. simulation_run id=2.
 
-## Phase 3 — Rewriter agentique + boucle live
+## Phase 3 — Rewriter agentique + simulation
 - Agent rewriter qui propose de nouvelles versions des instructions I_t
 - Prompt versionné en BDD avec CRUD + promotion/rollback
 - Batching d'erreurs (B=30) avant déclenchement du rewriter
-- **Intégration live** : chaque annotation dev déclenche une classification en background. Les erreurs s'accumulent et déclenchent le rewriter automatiquement.
+- **Simulation post-annotation** : l'humain annote d'abord, puis un script rejoue les annotations dans l'ordre et simule la boucle HILPO (mathématiquement équivalent au live)
 - Évaluation passive sur les posts suivants → promotion si accuracy ≥ ancienne
+- Critère d'arrêt : convergence (variation < 2% sur 3 dernières itérations)
+- Ablations triviales : rejouer avec B=1, 10, 30, 50 sans ré-annoter
 - Contribution principale du mémoire
 - **Statut** : pas commencé — implémentation prévue lundi 6 matin
