@@ -15,7 +15,7 @@ def count_commits_since_last_perspective_update() -> int:
     """Compte les commits depuis la dernière modification de agent_perspective.md."""
     try:
         result = subprocess.run(
-            ["git", "log", "--oneline", f"-- {PERSPECTIVE_FILE}"],
+            ["git", "log", "--oneline", "--", PERSPECTIVE_FILE],
             capture_output=True, text=True, cwd=Path(__file__).resolve().parents[2],
         )
         if not result.stdout.strip():
