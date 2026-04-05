@@ -19,7 +19,7 @@
 - Schema features JSON (résumé visuel libre + champs structurés)
 - 6 prompts v0 écrits à la main (2 descripteur + 3 classifieurs + 1 stratégie)
 - B0 baseline : pipeline batch async sur le split test (437 posts)
-- **Statut** : pipeline E2E fonctionnel (3/3 match sur premier test). 6 prompts v0 en BDD. B0 en cours.
+- **Statut** : ✅ terminée — B0 exécuté sur 434/437 posts test (3 échoués). Résultats : catégorie 87.3%, visual_format 64.3%, stratégie 93.5%. Coût : $1.14. simulation_run id=2.
 
 ## Phase 3 — Rewriter agentique + boucle live
 - Agent rewriter qui propose de nouvelles versions des instructions I_t

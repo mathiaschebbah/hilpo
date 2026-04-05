@@ -16,37 +16,118 @@ Tous rapportés en moyenne ± écart-type sur 5 splits.
 - Test de McNemar (paire par paire) entre chaque méthode sur chaque split
 - p-values rapportées, seuil alpha = 0.05 avec correction de Bonferroni
 
+## Protocole B0 → HILPO → BN
+
+Le protocole repose sur la comparaison de deux runs sur le **même test set** (437 posts) :
+
+1. **B0** (fait) : prompt v0 (écrit à la main) évalué sur test → accuracy baseline
+2. **Boucle HILPO** : l'humain annote le dev (~1560 posts) avec la boucle live. Le prompt évolue v0 → v1 → v2 → ... → vN via le rewriter.
+3. **BN** : prompt vN (dernier prompt actif) évalué sur test → accuracy finale
+
+La différence BN − B0 est directement attribuable à HILPO. Même test set, même pipeline, même descripteur, mêmes descriptions taxonomiques Δ^m — seules les instructions I_t changent.
+
+Chaque run est stocké dans `simulation_runs` avec sa config, ses métriques, et son coût. Reproductible.
+
 ## Convergence
 
-- Courbe accuracy vs nombre d'annotations (dev et test séparément)
+- Courbe accuracy vs nombre d'annotations (dev uniquement, rolling window de 50 posts)
+- Les moments de rewrite (v0 → v1 → v2...) sont annotés sur la courbe
 - Plateau défini comme : variation < 2% sur les 3 dernières itérations
+- Aucune réévaluation pendant la boucle — la courbe se dessine passivement avec les données en BDD
 
 ## Fiabilité de l'annotation
 
 - Kappa intra-annotateur (test-retest à l'aveugle, 50+ posts)
 - Kappa inter-annotateur (collaborateur Views, 500+ posts) — si disponible
 
+## Résultats B0 — Baseline zero-shot v0
+
+Exécuté le 5 avril 2026. simulation_run id=2. 434/437 posts classifiés (3 échoués — descripteur réponse vide).
+
+### Accuracy globale
+
+| Axe | Accuracy | Correct/Total |
+|-----|----------|---------------|
+| Catégorie (15 classes) | **87.3%** | 379/434 |
+| Visual_format (44 FEED + 16 REELS) | **64.3%** | 279/434 |
+| Stratégie (2 classes) | **93.5%** | 406/434 |
+
+### Accuracy par scope
+
+| Axe | FEED (369) | REELS (65) |
+|-----|------------|------------|
+| Catégorie | 90.0% | 72.3% |
+| Visual_format | 67.5% | 46.2% |
+| Stratégie | 93.5% | 93.8% |
+
+Les REELS sont significativement plus durs que les FEED sur catégorie (-17.7 pts) et visual_format (-21.3 pts). La stratégie est stable (signal dans la caption).
+
+### Visual_format — accuracy par format (≥ 3 occurrences test)
+
+| Format | Test | Accuracy | Note |
+|--------|------|----------|------|
+| post_mood | 113 | 94% | Format dominant, bien classé |
+| post_news | 111 | 68% | 23 confusions ← post_mood (anciens news sans texte) |
+| reel_voix_off | 17 | 82% | Audio détecté par Gemini |
+| post_chiffre | 22 | 41% | Confondu avec post_news |
+| post_selection | 20 | 50% | Confondu avec serie_mood_texte |
+| reel_news | 16 | 25% | Classé reel_mood/reel_wrap_up |
+| reel_wrap_up | 12 | 0% | Jamais prédit |
+| post_wrap_up | 8 | 0% | Jamais prédit |
+| post_en_savoir_plus | 5 | 0% | Jamais prédit |
+| post_stills | 4 | 100% | Parfait — screenshots distinctifs |
+
+### Patterns d'erreur principaux
+
+1. **post_mood ← post_news (23 erreurs)** : la règle "pas de texte overlay → post_mood" ignore les anciens post_news (news uniquement dans la caption). La description taxonomique couvre ce cas — les instructions I_t ne le priorisent pas.
+2. **post_news ← post_chiffre (13 erreurs)** : le classifieur voit "texte overlay + actualité" et conclut post_news, sans détecter le chiffre marquant en grand.
+3. **reel_mood ← reel_wrap_up / reel_news (16 erreurs)** : les REELS sans gabarit Views sont classés reel_mood par défaut.
+4. **Formats à 0%** : jamais prédits car absorbés par des formats plus fréquents. L'amélioration des critères sur les formats fréquents devrait libérer les formats rares (effet longue traîne indirect).
+
+### Coût
+
+| Agent | Modèle | Appels | Tokens in | Tokens out | Latence moy. | Coût |
+|-------|--------|--------|-----------|------------|--------------|------|
+| Descripteur FEED | Qwen 3.5 Flash | 369 | 5.66M | 196K | 6.8s | $0.42 |
+| Descripteur REELS | Gemini 2.5 Flash | 65 | 25K | 94K | 17.9s | $0.24 |
+| Visual_format | Qwen 3.5 Flash | 434 | 1.59M | 636K | 11.6s | $0.27 |
+| Catégorie | Qwen 3.5 Flash | 434 | 769K | 241K | 4.2s | $0.11 |
+| Stratégie | Qwen 3.5 Flash | 434 | 665K | 191K | 3.5s | $0.09 |
+| **TOTAL** | | **1 736** | **8.72M** | **1.36M** | | **$1.14** |
+
+### Contexte du rewriter — format des batches d'erreurs
+
+Quand le rewriter se déclenche (30 erreurs accumulées), il reçoit pour chaque erreur :
+
+- Le label **prédit** et le label **attendu** (annotation humaine)
+- Les **features JSON** extraites par le descripteur (texte_overlay, logos, mise_en_page, etc.)
+- Le **résumé visuel** du descripteur
+- La **caption** du post
+- La **description taxonomique** du format prédit ET du format attendu
+- Les **instructions I_t actuelles** du classifieur
+
+Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le comportement attendu vs observé, les features qui auraient dû déclencher le bon label, et les descriptions taxonomiques qui couvrent le cas. Il peut identifier quelles règles dans I_t sont responsables de l'erreur.
+
 ## Tiers de priorité
 
-### Tier 1 — Indispensable (jours 5-9)
+### Tier 1 — Indispensable
+
+| Action | Résultat attendu | Statut |
+|--------|------------------|--------|
+| Annoter split test (437 posts) | Ground truth test | ✅ fait |
+| B0 : zero-shot prompt v0 sur test | Accuracy baseline | ✅ fait — 87.3% / 64.3% / 93.5% |
+| Annoter split dev (~1560 posts) | Ground truth dev | ⬜ à faire (boucle HILPO live) |
+| Kappa intra-annotateur (re-swipe 50 posts) | Fiabilité ≥ 0.7 | ⬜ à faire |
+
+### Tier 2 — Nécessaire pour le claim
 
 | Action | Résultat attendu |
 |--------|------------------|
-| Annoter 2 000 posts (400/jour × 5 jours) | Ground truth complète |
-| Baseline B0 : zero-shot prompt v0 sur 400 test | Accuracy, F1 macro baseline |
-| Baseline B2 : few-shot 5 exemples/classe | F1 macro few-shot |
-| Kappa intra-annotateur (re-swipe 50 posts) | Fiabilité ≥ 0.7 |
-
-### Tier 2 — Nécessaire pour le claim (jours 7-10)
-
-| Action | Résultat attendu |
-|--------|------------------|
-| Phase 2 : classificateur parallèle live | Prédictions stockées en BDD |
 | Phase 3 : rewriter batch=30 + rollback | Prompts v1, v2, ... vN générés |
 | Courbe accuracy vs annotations | **LA figure centrale du mémoire** |
-| Éval prompt vN vs v0 sur split test | **LE chiffre central du mémoire** |
+| BN : éval prompt vN vs v0 sur split test | **LE chiffre central du mémoire** |
 
-### Tier 3 — Renforce le claim (jours 11-13)
+### Tier 3 — Renforce le claim
 
 | Action | Résultat attendu |
 |--------|------------------|
@@ -66,10 +147,10 @@ Tous rapportés en moyenne ± écart-type sur 5 splits.
 
 ## 4 figures indispensables
 
-1. **Courbe de convergence** : F1 macro en Y, nombre d'annotations en X. Montrer dev ET test. Annoter les moments de rewrite (v0 → v1 → v2...).
-2. **Tableau de comparaison des méthodes** : B0, B2, HILPO vN, avec F1 macro ± std sur 5 splits, p-values McNemar.
+1. **Courbe de convergence** : F1 macro en Y, nombre d'annotations en X. Montrer dev (rolling window). Annoter les moments de rewrite (v0 → v1 → v2...).
+2. **Tableau de comparaison** : B0, B2, HILPO vN, avec accuracy + F1 macro, p-values McNemar.
 3. **Ablation batch size** : Barplot ou courbe montrant l'effet de B=1, 10, 30, 50 sur la performance finale.
-4. **Matrice de confusion** : Pour l'axe le plus difficile (probablement visual_format, 44 classes), avant (v0) vs après (vN).
+4. **Matrice de confusion** : Pour visual_format, avant (v0) vs après (vN).
 
 ## Ablations
 
@@ -98,10 +179,10 @@ Tous rapportés en moyenne ± écart-type sur 5 splits.
 ## Checklist de recevabilité
 
 ### Cadrage théorique
-- [ ] Problématique = hypothèses falsifiables (H1, H2)
+- [x] Problématique = hypothèses falsifiables (H1, H2)
 - [ ] État de l'art ≥ 15 références (APE, DSPy, iPrOp, ProTeGi, PromptWizard)
-- [ ] Positionnement explicite (3 axes)
-- [ ] Formalisation mathématique de la boucle
+- [x] Positionnement explicite (4 axes)
+- [x] Formalisation mathématique de la boucle
 
 ### Protocole
 - [ ] Ground truth ≥ 1600 dev + 400 test
@@ -110,9 +191,9 @@ Tous rapportés en moyenne ± écart-type sur 5 splits.
 - [ ] McNemar + Bonferroni
 
 ### Résultats
-- [ ] B0 (zero-shot v0) sur 5 splits
-- [ ] B2 (few-shot) sur 5 splits
-- [ ] HILPO final sur 5 splits
+- [x] B0 (zero-shot v0) — 87.3% / 64.3% / 93.5%
+- [ ] B2 (few-shot)
+- [ ] HILPO final (BN)
 - [ ] Courbe de convergence
 - [ ] ≥ 1 ablation (batch size ou rollback)
 - [ ] Matrice de confusion avant/après
@@ -121,6 +202,7 @@ Tous rapportés en moyenne ± écart-type sur 5 splits.
 - [ ] Classes qui bénéficient le plus
 - [ ] Évolution qualitative du prompt (v0 → vN)
 - [ ] Transfert zero-shot : accuracy formats vus vs jamais vus pendant l'optimisation
+- [ ] Longue traîne : amélioration indirecte des formats rares via resserrement des formats fréquents
 - [ ] Limites honnêtes
 - [ ] Coût comparé (annotations, appels API, $)
 
