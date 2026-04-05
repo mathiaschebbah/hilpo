@@ -34,7 +34,8 @@ L'interface d'annotation pré-remplira les catégories v0 — l'humain confirme 
   - `post_*` : 44 formats (FEED)
   - `reel_*` : 16 formats (REELS)
   - `story_*` : 8 formats (STORY)
-  - Note : le CSV d'origine contenait 45 formats (38 post + 7 reel). Des formats ont été ajoutés (reel_throwback, post_views_magazine, reel_mood...) et `post_edito_photo` a été fusionné dans `post_mood` pendant l'annotation.
+  - 68/68 formats ont une description textuelle (critère visuel discriminant pour chaque format)
+  - Note : le CSV d'origine contenait 45 formats (38 post + 7 reel). Évolutions pendant l'annotation documentées ci-dessous.
 - **Catégorie éditoriale** : 15 classes (mode, musique, sport, cinéma, société, art_culture, photographie, people, architecture_design, technologie, voyages, lifestyle, business, histoire, gastronomie)
 - **Stratégie** : 2 classes (Organic, Brand Content)
 
@@ -66,3 +67,68 @@ Le split test **préserve fidèlement** la distribution du dataset complet (20K 
 ### Implications méthodologiques
 
 Le F1 macro sera reporté **avec et sans les classes rares** (< 5 occurrences) pour isoler l'effet de la longue traîne. Ce n'est pas un biais d'échantillonnage — c'est la distribution réelle du dataset. C'est un argument pour HILPO : les méthodes supervisées échouent sur la longue traîne (pas d'exemples), HILPO peut classifier via les descriptions taxonomiques.
+
+## Travail sur la taxonomie — Observations d'annotation
+
+La taxonomie a évolué pendant l'annotation au contact des données réelles. Ce travail itératif est documenté ici car il informe directement la qualité des descriptions injectées dans le prompt HILPO (Δ^m).
+
+### Fusions réalisées
+
+| Avant | Après | Raison |
+|-------|-------|--------|
+| `post_edito_photo` | → `post_mood` | La distinction n'existait pas en pratique chez Views. Les deux formats = photos sans texte sur l'image. La description interne Views confirme : "photos esthétiques avec des visuels forts, sans texte". |
+| `post_retour_en_images` | → `post_wrap_up` | Même gabarit visuel (recap événement). La distinction organic/brand est capturée par l'axe stratégie, pas le format visuel. |
+| `reel_evenement` | → `reel_wrap_up` | Idem — captation live et montage post-événement fusionnés. |
+
+### Formats ajoutés pendant l'annotation
+
+| Format | Raison |
+|--------|--------|
+| `reel_throwback` | Reels anniversaire/hommage distincts de `reel_deces` (info décès) |
+| `post_views_magazine` / `reel_views_magazine` / `story_views_magazine` | Promotion du magazine papier Views |
+| `reel_mood` | Équivalent reel du post_mood |
+| `post_views_tv` | Promotion de contenus Views TV (documentaires YouTube) |
+| `reel_blueprint` | Interviews exclusives Views, identifiables par le logo Blueprint |
+
+### Critères discriminants clarifiés
+
+**Le format visuel se détermine par ce qu'on voit SUR l'image, pas par la caption.**
+
+| Critère | Format |
+|---------|--------|
+| Aucun texte, aucun overlay, pas de logo → | `post_mood` |
+| Texte d'actualité en overlay + logo Views → | `post_news` |
+| Gabarit structuré avec texte sur chaque slide → | `post_selection` |
+| Texte dense type article + fond couleur → | `post_article` |
+| Photo + texte gras/normal en overlay + logo → | `post_serie_mood_texte` |
+
+**Exception :** les `post_news` anciens (2018-2020) n'ont pas de texte sur l'image — la news est uniquement dans la caption. La description couvre les deux versions (récente avec overlay, ancienne sans). Le modèle utilise la caption comme signal complémentaire pour ces cas.
+
+### Évolution temporelle des captions
+
+L'analyse des `post_mood` révèle une évolution nette de la longueur des captions :
+
+| Période | Caption moyenne | Style |
+|---------|:---------:|-------|
+| 2018-2020 | ~160 chars | "Mood. 📸" — vibe pur |
+| 2021-2023 | ~410 chars | Description éditoriale courte |
+| 2024-2025 | ~890 chars | Mini-articles, contexte détaillé |
+
+Le format visuel reste identique (photos sans texte), mais la stratégie de caption a évolué vers du contenu plus éditorial. **La longueur de caption n'est pas un critère de format visuel** — un post_mood avec 900 caractères de caption reste un post_mood si l'image n'a pas de texte.
+
+### Formats à 0 occurrence dans le sample
+
+8 formats POST et 3 formats REEL existent dans la taxonomie mais n'apparaissent pas dans l'échantillon de 2000 posts. Ils ont été vérifiés visuellement sur le feed Instagram Views :
+
+| Format | Vérifié | Source |
+|--------|---------|--------|
+| `post_rewind` | ✅ | Posts de décembre 2023/2024, logo REWIND |
+| `post_blueprint` | ✅ | Identifiable par "Blueprint" dans la caption |
+| `post_views_research` | ✅ | Études menées par Views ("notre étude sur la mode et l'écologie") |
+| `post_objets` | ✅ | PSD interne octobre 2025, zoom circulaire sur accessoire |
+| `post_ourviews` | ✅ | Format historique 2016-2017, #ourviews |
+| `reel_blueprint` | ✅ | ~10 reels identifiés par caption |
+| `reel_deces` | ✅ | Version reel de post_deces |
+| `reel_double_selection` | ✅ | Version reel de post_double_selection |
+
+Ces formats servent de test de **transfert zero-shot** : le modèle devra les classifier uniquement via leur description textuelle, sans avoir vu d'exemple pendant l'optimisation.
