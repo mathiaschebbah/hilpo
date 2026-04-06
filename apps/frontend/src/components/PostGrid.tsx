@@ -132,9 +132,14 @@ export function PostGrid({ onOpenPost }: Props) {
           </SelectContent>
         </Select>
 
-        <span className="ml-auto text-xs font-mono text-neutral-400 tabular-nums">
-          {total} posts
-        </span>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="hidden text-xs text-neutral-400 md:inline">
+            Cliquer sur un post pour l'ouvrir ou le réannoter
+          </span>
+          <span className="text-xs font-mono text-neutral-400 tabular-nums">
+            {total} posts
+          </span>
+        </div>
       </div>
 
       {/* Grille */}
@@ -149,8 +154,8 @@ export function PostGrid({ onOpenPost }: Props) {
           {items.map(item => (
             <div
               key={item.ig_media_id}
-              onClick={() => item.split === 'test' && onOpenPost?.(item.ig_media_id)}
-              className={`group relative rounded-lg overflow-hidden bg-neutral-100 ${item.split === 'test' && onOpenPost ? 'cursor-pointer hover:ring-2 hover:ring-amber-300 transition-shadow' : ''}`}
+              onClick={() => onOpenPost?.(item.ig_media_id)}
+              className={`group relative rounded-lg overflow-hidden bg-neutral-100 ${onOpenPost ? 'cursor-pointer hover:ring-2 hover:ring-amber-300 transition-shadow' : ''}`}
             >
               {/* Image */}
               <div className="aspect-[4/5] relative">

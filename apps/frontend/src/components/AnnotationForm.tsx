@@ -97,6 +97,8 @@ const FORMAT_PREFIX: Record<string, string> = {
 
 export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSkip, onFormatUpdated }: Props) {
   const { heuristic } = data
+  const hasExistingAnnotation = data.annotation != null
+  const isExistingDoubtful = data.annotation?.doubtful === true
 
   const filteredFormats = useMemo(() => {
     const prefix = FORMAT_PREFIX[data.post.media_product_type]
@@ -152,7 +154,19 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
     <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
       {/* Heuristique v0 */}
       <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-100">
-        <p className="text-[11px] font-medium text-neutral-400 mb-2">Heuristique v0</p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-[11px] font-medium text-neutral-400">Heuristique v0</p>
+          {hasExistingAnnotation && (
+            <Badge
+              variant="outline"
+              className={isExistingDoubtful
+                ? 'text-[11px] border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-50'
+                : 'text-[11px] border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-50'}
+            >
+              {isExistingDoubtful ? 'Réannotation pas sûre' : 'Réannotation'}
+            </Badge>
+          )}
+        </div>
         <div className="flex gap-1.5 flex-wrap">
           {heuristic.heuristic_category && (
             <Badge variant="secondary" className="text-[11px] bg-neutral-100 text-neutral-600 hover:bg-neutral-100">
@@ -260,6 +274,7 @@ export function AnnotationForm({ data, categories, visualFormats, onSubmit, onSk
       {/* Actions */}
       <div className="px-4 py-3 border-t border-neutral-100 flex gap-2">
         <Button variant="ghost" onClick={onSkip} className="h-10 text-sm text-neutral-500 px-3">
+          Plus tard
           <kbd className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">esc</kbd>
         </Button>
         <Button

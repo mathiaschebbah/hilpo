@@ -34,6 +34,7 @@ type Annotation = {
   category_id: number | null
   visual_format_id: number | null
   strategy: string | null
+  doubtful: boolean
 }
 
 export type PostData = {
