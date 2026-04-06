@@ -19,14 +19,14 @@ from hilpo.config import (
 from hilpo.agent import (
     build_classifier_messages,
     build_descriptor_messages,
-    parse_classifier_response,
+    parse_classifier_arguments,
 )
 from hilpo.inference import ApiCallLog, PostInput, PromptSet, PipelineResult
 from hilpo.router import route
 from hilpo.schemas import (
     DescriptorFeatures,
     PostPrediction,
-    build_classifier_response_schema,
+    build_classifier_tool,
     build_json_schema_response_format,
 )
 
@@ -123,23 +123,28 @@ async def async_call_classifier(
     descriptions_taxonomiques: str,
     semaphore: asyncio.Semaphore,
 ) -> tuple[str, str, ApiCallLog]:
+    """Appelle un classifieur via tool calling forcé (universal OpenRouter).
+
+    Voir hilpo/agent.py:call_classifier pour les motivations.
+    """
     messages = build_classifier_messages(
         features_json, caption, instructions, descriptions_taxonomiques,
     )
-    response_format = build_json_schema_response_format(
-        f"{axis}_classification",
-        build_classifier_response_schema(labels),
-    )
+    tool = build_classifier_tool(axis, labels)
+    tool_name = tool["function"]["name"]
 
     max_retries = 3
     for attempt in range(max_retries):
         async with semaphore:
             start = time.monotonic()
             try:
+                # tool_choice="auto" : voir hilpo/agent.py:call_classifier
+                # pour la motivation (seul mode supporté par les providers Qwen 3.5 Flash).
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    response_format=response_format,
+                    tools=[tool],
+                    tool_choice="auto",
                     temperature=0.1,
                 )
             except Exception as e:
@@ -157,22 +162,43 @@ async def async_call_classifier(
                 continue
             raise RuntimeError(f"Classifier {axis}: réponse vide après retries")
 
-        raw = response.choices[0].message.content or ""
-        if not raw:
-            log.warning("Classifier %s content vide (attempt %d)", axis, attempt + 1)
+        choice = response.choices[0]
+        if not choice.message.tool_calls:
+            log.warning(
+                "Classifier %s pas de tool_call (attempt %d) — content=%r",
+                axis, attempt + 1, choice.message.content,
+            )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
                 continue
-            raise RuntimeError(f"Classifier {axis}: content vide après retries")
+            raise RuntimeError(f"Classifier {axis}: pas de tool_call après retries")
+
+        tool_call = choice.message.tool_calls[0]
+        if tool_call.function.name != tool_name:
+            log.warning(
+                "Classifier %s nom de tool inattendu '%s' (attendu '%s')",
+                axis, tool_call.function.name, tool_name,
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(
+                f"Classifier {axis}: nom de tool inattendu '{tool_call.function.name}'"
+            )
 
         try:
-            label, confidence = parse_classifier_response(raw, axis, labels)
+            label, confidence = parse_classifier_arguments(
+                tool_call.function.arguments, axis, labels,
+            )
         except Exception as e:
-            log.warning("Classifier %s JSON invalide (attempt %d): %s", axis, attempt + 1, e)
+            log.warning(
+                "Classifier %s arguments invalides (attempt %d): %s — raw=%r",
+                axis, attempt + 1, e, tool_call.function.arguments,
+            )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
                 continue
-            raise RuntimeError(f"Classifier {axis}: JSON invalide après retries") from e
+            raise RuntimeError(f"Classifier {axis}: arguments invalides après retries") from e
 
         usage = response.usage
         api_log = ApiCallLog(

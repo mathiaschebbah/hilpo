@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -11,7 +12,7 @@ from hilpo.errors import LLMCallError
 from hilpo.schemas import (
     ClassifierDecision,
     DescriptorFeatures,
-    build_classifier_response_schema,
+    build_classifier_tool,
     build_json_schema_response_format,
 )
 
@@ -145,12 +146,23 @@ def call_descriptor(
 # ── Classifieur text-only (structured output strict) ───────────
 
 
-def parse_classifier_response(raw: str, axis: str, labels: list[str]) -> tuple[str, str]:
-    """Valide la sortie structurée d'un classifieur."""
+def parse_classifier_arguments(arguments: str, axis: str, labels: list[str]) -> tuple[str, str]:
+    """Parse et valide les arguments d'un tool_call de classifieur.
 
-    parsed = ClassifierDecision.model_validate_json(raw)
+    Args:
+        arguments: La chaîne JSON dans tool_call.function.arguments.
+        axis: Nom de l'axe (pour l'erreur).
+        labels: Labels valides (pour la validation enum).
+
+    Returns:
+        (label, confidence) validés.
+
+    Raises:
+        RuntimeError si le JSON est invalide ou si le label n'est pas dans l'enum.
+    """
+    parsed = ClassifierDecision.model_validate_json(arguments)
     if parsed.label not in labels:
-        raise RuntimeError(f"Classifier {axis}: label invalide '{parsed.label}'")
+        raise RuntimeError(f"Classifier {axis}: label invalide '{parsed.label}' (hors enum)")
     return parsed.label, parsed.confidence
 
 
@@ -190,7 +202,14 @@ def call_classifier(
     instructions: str,
     descriptions_taxonomiques: str,
 ) -> tuple[str, str, dict]:
-    """Appelle un classifieur text-only avec tool use.
+    """Appelle un classifieur text-only via tool calling forcé.
+
+    Utilise l'API tool calling avec tool_choice forcé sur la fonction
+    classify_<axis>. Cette approche est universellement supportée par tous
+    les providers OpenRouter, contrairement à response_format=json_schema
+    qui n'est pas honoré par certains providers (notamment Qwen 3.5 Flash
+    sur les enums binaires : il renvoyait un float `-1.5` au lieu d'un
+    objet {label, confidence}).
 
     Returns:
         Tuple (label, confidence, api_usage).
@@ -199,31 +218,47 @@ def call_classifier(
         features_json, caption,
         instructions, descriptions_taxonomiques,
     )
-    response_format = build_json_schema_response_format(
-        f"{axis}_classification",
-        build_classifier_response_schema(labels),
-    )
+    tool = build_classifier_tool(axis, labels)
+    tool_name = tool["function"]["name"]
 
     start = time.monotonic()
     last_error: Exception | None = None
 
     for attempt in range(MAX_SYNC_RETRIES):
         try:
+            # tool_choice="auto" : laisse le modèle décider d'appeler le tool.
+            # Avec un seul tool fourni et un prompt cohérent, le modèle l'appelle
+            # systématiquement en pratique. On utilise "auto" plutôt que "required"
+            # ou un object {"type":"function",...} parce que les providers Qwen 3.5
+            # Flash via OpenRouter ne supportent que "auto" pour tool_choice.
+            # C'est le comportement d'origine pré-commit d2e84e9 (qui marchait sur le run id=2).
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                response_format=response_format,
+                tools=[tool],
+                tool_choice="auto",
                 temperature=0.1,
             )
 
             if not response.choices:
                 raise RuntimeError(f"Classifier {axis}: réponse vide")
 
-            raw = response.choices[0].message.content or ""
-            if not raw:
-                raise RuntimeError(f"Classifier {axis}: content vide")
+            choice = response.choices[0]
+            if not choice.message.tool_calls:
+                raise RuntimeError(
+                    f"Classifier {axis}: pas de tool_call dans la réponse "
+                    f"(content={choice.message.content!r})"
+                )
 
-            label, confidence = parse_classifier_response(raw, axis, labels)
+            tool_call = choice.message.tool_calls[0]
+            if tool_call.function.name != tool_name:
+                raise RuntimeError(
+                    f"Classifier {axis}: nom de tool inattendu '{tool_call.function.name}'"
+                )
+
+            label, confidence = parse_classifier_arguments(
+                tool_call.function.arguments, axis, labels,
+            )
 
             latency_ms = int((time.monotonic() - start) * 1000)
             usage = response.usage

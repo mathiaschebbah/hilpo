@@ -118,7 +118,10 @@ def build_json_schema_response_format(name: str, schema: dict) -> dict:
 
 
 def build_classifier_response_schema(labels: list[str]) -> dict:
-    """Schéma strict de sortie pour un classifieur HILPO."""
+    """Schéma strict (label + confidence) pour un classifieur HILPO.
+
+    Réutilisé par build_classifier_tool() pour les paramètres du tool function.
+    """
 
     return {
         "type": "object",
@@ -137,8 +140,31 @@ def build_classifier_response_schema(labels: list[str]) -> dict:
     }
 
 
+def build_classifier_tool(axis: str, labels: list[str]) -> dict:
+    """Construit la définition tool/function pour un classifieur HILPO.
+
+    On utilise l'API tool calling (function calling) plutôt que
+    response_format=json_schema parce que tool calling est universellement
+    supporté par tous les providers OpenRouter, alors que json_schema strict
+    n'est pas honoré par certains providers (notamment Qwen 3.5 Flash sur
+    les enums binaires : il renvoie un float au lieu d'un objet).
+    """
+
+    return {
+        "type": "function",
+        "function": {
+            "name": f"classify_{axis}",
+            "description": f"Classifie le post sur l'axe '{axis}'.",
+            "parameters": build_classifier_response_schema(labels),
+        },
+    }
+
+
 class ClassifierDecision(StrictBaseModel):
-    """Décision structurée d'un classifieur."""
+    """Décision structurée d'un classifieur (label + confidence).
+
+    Utilisée pour valider les arguments parsés depuis tool_call.function.arguments.
+    """
 
     label: str
     confidence: Literal["high", "medium", "low"]
