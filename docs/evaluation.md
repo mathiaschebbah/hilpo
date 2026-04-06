@@ -43,77 +43,78 @@ Chaque run est stocké dans `simulation_runs` avec sa config, ses métriques, et
 
 ## Résultats B0 — Baseline zero-shot v0
 
-> ---
-> ⚠️ **OBSOLÈTE — en attente de relance**
->
-> Les résultats ci-dessous ont été obtenus le 2026-04-05 avec une configuration intermédiaire qui a depuis été corrigée. Quatre événements successifs invalident le run id=2 :
->
-> 1. Commit `d2e84e9` (2026-04-05) — *Enforce strict JSON schemas* — a migré le pipeline vers `response_format=json_schema` strict pour les 6 outputs (descripteur + 3 classifieurs) et a réécrit les prompts v0 pour retirer les références au tool use.
-> 2. Le 2026-04-06 matin : les prompts v0 modifiés au commit `d2e84e9` ont été lockés en BDD via la migration [`006_seed_prompts_v0.sql`](../apps/backend/migrations/006_seed_prompts_v0.sql) (avant le run id=2 utilisait les anciens prompts en BDD, donc déjà incohérent).
-> 3. Commit `0b3bd8b` (2026-04-06) — *Revert classifiers to tool calling* — a fixé un bug Qwen 3.5 Flash : `response_format=json_schema` strict n'est pas réellement honoré par les providers Qwen sur les enums binaires (le classifieur strategy renvoyait un float `-1.5` au lieu d'un objet). Les 3 classifieurs sont revenus à l'API tool calling. Le descripteur garde `json_schema`.
-> 4. Commit `7e352ab` (2026-04-06) — *Switch descriptor to Gemini 3 Flash Preview* — la relance B0 (run id=6) a échoué sur 5 posts à 41% du run : 3 REELS (Gemini 2.5 Flash via Google AI Studio renvoyait des réponses vides ou des 503 *high demand* sous concurrence) et 2 carousels FEED de 5 et 10 slides (Qwen 3.5 Flash a une limite carousel à ~8 images, raw vide à 10+). Investigation systématique : 5 stratégies REELS testées (Gemini 2.5 default ✓ en isolation mais échec en concurrence, vertex 404, Gemini 3 Flash Preview ✓, vertex ✓, base64 ✓), 3 carousels test 20 slides validés sur Gemini 3, audio détecté correctement. Les deux descripteurs (FEED et REELS) sont passés à `google/gemini-3-flash-preview` qui marche pour tout. Coût ~$0.50/M (vs $0.065-0.30/M précédemment), justifié par la fiabilité indispensable pour le baseline.
->
-> **Configuration courante (à utiliser pour le nouveau B0)** :
-> - Descripteur FEED+REELS : `google/gemini-3-flash-preview` avec `response_format=json_schema`
-> - Classifieurs (×3) : `qwen/qwen3.5-flash-02-23` avec `tools=[tool] + tool_choice="auto"`
-> - Prompts v0 : ceux lockés via migration 006 (inchangés depuis)
-> - Runs supprimés de la BDD : id=2 (backup SQL `data/backups/run_2_2026-04-06_11-32.sql`), id=4 et id=5 (vides), id=6 (vide, killé par l'utilisateur après détection des bugs descripteurs).
->
-> Un nouveau B0 doit être lancé (`uv run python scripts/run_baseline.py`). Les chiffres, patterns d'erreur et coûts listés dans cette section restent ici à titre historique jusqu'à ce que les nouveaux résultats soient disponibles.
-> ---
-
-Exécuté le 5 avril 2026. simulation_run id=2. 434/437 posts classifiés (3 échoués — descripteur réponse vide).
+Exécuté le 2026-04-06. **simulation_run id=7. 437/437 posts classifiés (100% de couverture)**. Configuration : descripteur Gemini 3 Flash Preview pour FEED+REELS (`response_format=json_schema`), classifieurs Qwen 3.5 Flash + tool calling forcé (`tool_choice="auto"`), prompts v0 lockés via [migration 006](../apps/backend/migrations/006_seed_prompts_v0.sql).
 
 ### Accuracy globale
 
 | Axe | Accuracy | Correct/Total |
 |-----|----------|---------------|
-| Catégorie (15 classes) | **87.3%** | 379/434 |
-| Visual_format (44 FEED + 16 REELS) | **64.3%** | 279/434 |
-| Stratégie (2 classes) | **93.5%** | 406/434 |
+| Catégorie (15 classes) | **86.7%** | 379/437 |
+| Visual_format (44 FEED + 16 REELS) | **65.4%** | 286/437 |
+| Stratégie (2 classes) | **94.5%** | 413/437 |
 
 ### Accuracy par scope
 
-| Axe | FEED (369) | REELS (65) |
-|-----|------------|------------|
-| Catégorie | 90.0% | 72.3% |
-| Visual_format | 67.5% | 46.2% |
-| Stratégie | 93.5% | 93.8% |
+| Axe | FEED (372) | REELS (65) | Δ FEED → REELS |
+|-----|------------|------------|----------------|
+| Catégorie | 89.0% | 73.8% | -15.2 pts |
+| Visual_format | 68.0% | 50.8% | -17.2 pts |
+| Stratégie | 94.6% | 93.8% | -0.8 pt |
 
-Les REELS sont significativement plus durs que les FEED sur catégorie (-17.7 pts) et visual_format (-21.3 pts). La stratégie est stable (signal dans la caption).
+Les REELS sont significativement plus durs que les FEED sur catégorie et visual_format. La stratégie est stable (signal dans la caption, peu importe le scope).
 
-### Visual_format — accuracy par format (≥ 3 occurrences test)
+### Patterns d'erreur principaux (visual_format)
 
-| Format | Test | Accuracy | Note |
-|--------|------|----------|------|
-| post_mood | 113 | 94% | Format dominant, bien classé |
-| post_news | 111 | 68% | 23 confusions ← post_mood (anciens news sans texte) |
-| reel_voix_off | 17 | 82% | Audio détecté par Gemini |
-| post_chiffre | 22 | 41% | Confondu avec post_news |
-| post_selection | 20 | 50% | Confondu avec serie_mood_texte |
-| reel_news | 16 | 25% | Classé reel_mood/reel_wrap_up |
-| reel_wrap_up | 12 | 0% | Jamais prédit |
-| post_wrap_up | 8 | 0% | Jamais prédit |
-| post_en_savoir_plus | 5 | 0% | Jamais prédit |
-| post_stills | 4 | 100% | Parfait — screenshots distinctifs |
+| Expected → Predicted | n | Interprétation |
+|---|---|---|
+| post_news → post_mood | 22 | Anciens post_news sans texte en overlay (news dans la caption uniquement). La description taxonomique couvre ce cas — les instructions I_t ne le priorisent pas. |
+| post_chiffre → post_news | 18 | Le classifieur voit "texte overlay + actualité" et conclut post_news, sans détecter le chiffre marquant en grand. |
+| post_selection → post_serie_mood_texte | 12 | Confusion sur les carousels structurés avec texte par slide. |
+| reel_news → reel_mood | 10 | Les REELS sans gabarit Views sont classés reel_mood par défaut. |
+| reel_interview → reel_sitdown | 5 | Confusion entre 2 types d'interview (face caméra assise vs debout/mouvement). |
+| post_wrap_up → post_mood | 4 | Recap événement absorbé par mood. |
+| reel_wrap_up → reel_mood | 4 | Idem côté reels. |
+| post_en_savoir_plus_selection → post_selection | 3 | Variante non distinguée. |
+| post_interview → post_blueprint | 3 | Confusion gabarit. |
+| post_news → post_serie_mood_texte | 3 | |
 
-### Patterns d'erreur principaux
+Ces patterns sont **identiques aux observations du run id=2 (pré-fix)** — ce sont des limitations des **prompts v0**, pas du modèle. C'est exactement ce que la boucle HILPO doit corriger en simulation.
 
-1. **post_mood ← post_news (23 erreurs)** : la règle "pas de texte overlay → post_mood" ignore les anciens post_news (news uniquement dans la caption). La description taxonomique couvre ce cas — les instructions I_t ne le priorisent pas.
-2. **post_news ← post_chiffre (13 erreurs)** : le classifieur voit "texte overlay + actualité" et conclut post_news, sans détecter le chiffre marquant en grand.
-3. **reel_mood ← reel_wrap_up / reel_news (16 erreurs)** : les REELS sans gabarit Views sont classés reel_mood par défaut.
-4. **Formats à 0%** : jamais prédits car absorbés par des formats plus fréquents. L'amélioration des critères sur les formats fréquents devrait libérer les formats rares (effet longue traîne indirect).
-
-### Coût
+### Coût détaillé
 
 | Agent | Modèle | Appels | Tokens in | Tokens out | Latence moy. | Coût |
 |-------|--------|--------|-----------|------------|--------------|------|
-| Descripteur FEED | Qwen 3.5 Flash | 369 | 5.66M | 196K | 6.8s | $0.42 |
-| Descripteur REELS | Gemini 2.5 Flash | 65 | 25K | 94K | 17.9s | $0.24 |
-| Visual_format | Qwen 3.5 Flash | 434 | 1.59M | 636K | 11.6s | $0.27 |
-| Catégorie | Qwen 3.5 Flash | 434 | 769K | 241K | 4.2s | $0.11 |
-| Stratégie | Qwen 3.5 Flash | 434 | 665K | 191K | 3.5s | $0.09 |
-| **TOTAL** | | **1 736** | **8.72M** | **1.36M** | | **$1.14** |
+| Descripteur | Gemini 3 Flash Preview | 437 | 3.37M | 245K | 9.3s | **$2.42** |
+| Catégorie | Qwen 3.5 Flash | 437 | 721K | 497K | 12.5s | $0.08 |
+| Visual_format | Qwen 3.5 Flash | 437 | 1.55M | 382K | 10.3s | $0.13 |
+| Stratégie | Qwen 3.5 Flash | 437 | 616K | 196K | 5.2s | $0.05 |
+| **TOTAL** | | **1 748** | **6.26M** | **1.32M** | | **$2.68** |
+
+Durée totale : 25.4 min (concurrence 10 posts × 20 appels API, 1748 appels au total). Coût stocké en BDD via `simulation_runs.total_cost_usd = 2.68`. Tarifs OpenRouter : Gemini 3 Flash Preview $0.50/M input + $3.00/M output, Qwen 3.5 Flash $0.065/M input/output.
+
+### Évolution depuis le run id=2 (5 avril, baseline obsolète)
+
+| Métrique | Run id=2 (5 avril) | Run id=7 (6 avril) | Δ |
+|---|---|---|---|
+| Couverture | 434/437 (99.3%) | **437/437 (100%)** | +3 posts |
+| Accuracy catégorie | 87.3% | 86.7% | -0.6 pt |
+| Accuracy visual_format | 64.3% | **65.4%** | +1.1 pt |
+| Accuracy stratégie | 93.5% | **94.5%** | +1.0 pt |
+| Visual_format FEED | 67.5% | **68.0%** | +0.5 pt |
+| **Visual_format REELS** | **46.2%** | **50.8%** | **+4.6 pts** ⭐ |
+| Catégorie REELS | 72.3% | **73.8%** | +1.5 pt |
+| Coût total | $1.14 | $2.68 | +$1.54 (+135%) |
+| Durée wall | ~5 min | 25.4 min | +20 min |
+
+Le passage à Gemini 3 Flash Preview améliore principalement le scope **REELS visual_format (+4.6 pts)**, confirmant que le nouveau descripteur perçoit mieux les vidéos. Les axes catégorie et stratégie sont stables ou légèrement améliorés. La hausse de coût et de latence est le prix de la **fiabilité** : couverture parfaite (100%), pas d'échec sur les gros carousels jusqu'à 20 slides, pas d'effondrement sous concurrence.
+
+### Historique de la baseline (traçabilité)
+
+Le run id=7 est le **3e run B0** du projet — les 2 précédents ont été invalidés par des fixes de pipeline successifs :
+
+1. **Run id=2** (5 avril, supprimé) : 87.3% / 64.3% / 93.5%, $1.14, 434/437. Configuration intermédiaire qui a révélé deux bugs cachés : (a) `response_format=json_schema` strict n'est pas honoré par Qwen sur les enums binaires (commit `0b3bd8b` a fixé le bug en revenant au tool calling), (b) Qwen 3.5 Flash a une limite carousel à ~8 images. Backup SQL conservé dans `data/backups/run_2_2026-04-06_11-32.sql`.
+2. **Runs id=4, 5, 6** (6 avril, supprimés) : tous tués en cours par l'humain après détection empirique des bugs descripteurs (Qwen carousels >8 + Gemini 2.5 Flash instable sous concurrence Google AI Studio).
+3. **Run id=7** (6 avril, courant) : configuration finale stabilisée — descripteur Gemini 3 Flash Preview pour les 2 scopes (commit `7e352ab`), classifieurs Qwen 3.5 Flash + tool calling, prompts v0 lockés via migration 006. **Couverture 100%, validation empirique complète.**
 
 ### Contexte du rewriter — format des batches d'erreurs
 
@@ -135,7 +136,7 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 | Action | Résultat attendu | Statut |
 |--------|------------------|--------|
 | Annoter split test (437 posts) | Ground truth test | ✅ fait |
-| B0 : zero-shot prompt v0 sur test | Accuracy baseline | ⚠️ à relancer — prompts v0 modifiés au commit `d2e84e9`, run id=2 supprimé (voir bandeau OBSOLÈTE ci-dessus) |
+| B0 : zero-shot prompt v0 sur test | Accuracy baseline | ✅ fait — 86.7% / 65.4% / 94.5% (run id=7, 437/437, $2.68) |
 | Annoter split dev (1 563 posts) | Ground truth dev | ⬜ à faire (annotation aveugle, puis simulation prequential) |
 | Kappa intra-annotateur (re-swipe 50 posts) | Fiabilité ≥ 0.7 | ⬜ à faire |
 
@@ -211,7 +212,7 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 - [ ] McNemar sur B0 vs HILPO vN
 
 ### Résultats
-- [ ] B0 (zero-shot v0) — à relancer avec les prompts v0 lockés via migration 006 (les anciens chiffres 87.3% / 64.3% / 93.5% sont obsolètes depuis le commit `d2e84e9`)
+- [x] B0 (zero-shot v0) — 86.7% / 65.4% / 94.5% (run id=7, 437/437 posts, $2.68, prompts v0 lockés via migration 006)
 - [ ] B2 (few-shot)
 - [ ] HILPO final (BN)
 - [ ] Courbe de convergence

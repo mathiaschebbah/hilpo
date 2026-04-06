@@ -19,7 +19,7 @@
 - Schema features JSON (résumé visuel libre + champs structurés)
 - 6 prompts v0 écrits à la main (2 descripteur + 3 classifieurs + 1 stratégie)
 - B0 baseline : pipeline batch async sur le split test (437 posts)
-- **Statut** : ⚠️ à relancer. Le B0 d'origine (run id=2, 87.3% / 64.3% / 93.5%, $1.14) utilisait les prompts v0 avant le commit `d2e84e9` (passage au JSON schema strict). Le run 2 a été supprimé de la BDD le 2026-04-06 et les prompts v0 ont été verrouillés en BDD via la migration [`006_seed_prompts_v0.sql`](../apps/backend/migrations/006_seed_prompts_v0.sql). Backup SQL conservé dans `data/backups/run_2_2026-04-06_11-32.sql`. Nouveau B0 à lancer avec les prompts v0 courants (ids 7-12 en BDD).
+- **Statut** : ✅ terminée. **Run id=7 (2026-04-06)** : 437/437 posts classifiés (100% couverture, première fois sans aucun échec), accuracies 86.7% / 65.4% / 94.5%, coût $2.68, durée 25.4 min. Configuration : descripteur Gemini 3 Flash Preview pour FEED+REELS (commit `7e352ab`), classifieurs Qwen 3.5 Flash + tool calling forcé (commit `0b3bd8b`), prompts v0 lockés via [migration 006](../apps/backend/migrations/006_seed_prompts_v0.sql). Détails complets dans [evaluation.md](evaluation.md#résultats-b0--baseline-zero-shot-v0).
 
 ## Phase 3 — Rewriter agentique + simulation
 - Agent rewriter qui propose de nouvelles versions des instructions I_t
