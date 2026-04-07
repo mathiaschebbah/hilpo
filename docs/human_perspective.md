@@ -25,6 +25,7 @@ En outre, les motivations d'une telle démarche sont :
 - Terence Tao cite ChatGPT dans ses travaux, je veux aller dans cette dynamique et faire un travail sérieux, assumé et défendable qui utilise les modèles de génération de texte.
 - Difficulté à trouver une bonne problématique après cela.
 - Les agents produisent, à mon sens, un travail qui est valorisable, et que l'on peut imputer à leur humain.
+- Amplifier ma compréhension des LLM et des modèles génératifs
 - L’envie de faire un travail qui sort de l’ordinaire et du cadre « classique » ;)
 
 ## 2. Ce qui en émerge
