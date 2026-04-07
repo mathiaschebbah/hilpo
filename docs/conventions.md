@@ -4,6 +4,7 @@
 
 - **AskUserQuestion intensif** : utiliser AskUserQuestion pour valider les choix, clarifier les ambiguïtés et confirmer les directions avant d'agir. Ne pas deviner, demander.
 - **Français avec accents** : tout contenu en français (README, docs, commentaires, messages de commit) doit utiliser les accents corrects (é, è, à, ù, etc.). Toujours relire avant d'écrire un fichier.
+- **Interdiction formelle** d'écrire dans [`docs/human_perspective.md`](docs/human_perspective.md)
 
 ## API REST
 
