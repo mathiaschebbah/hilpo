@@ -4,8 +4,9 @@ VERSION 1.0 - L'agent n'a pas le droit d'écrire dans ce fichier.
 
 ## 1. Pourquoi une telle démarche, et pourquoi le faire au sein de mon Mémoire de Master 1 ? 
 L'émergence des IA génératives a profondément bousculé notre rapport à l'apprentissage, notre travail scolaire et étudiant. Le constat est simple, clair et sans appel, tout le monde utilise les outils d'IA génératives pour produire des rendus, quelqu'ils soient, et-ce même pour les travaux tels que les mémoires.
+De plus, au sein de mes activités chez Views, j'utilise de manière intensive les agents de code, en particulier Claude Code, qui connaît un taux d'adoption fulgurant dans notre équipe.
 
-Mon idée est celle-ci : plutôt que de réaliser mon mémoire silencieusement avec Claude, ChatGPT, et tous les outils dont je peux disposer, en prétendant qu'il s'agit du fruit de mon travail seul, je mets en lumière cette collaboration, et observe, dans la durée, ce qui en émerge. Je prends le problème à l'envers. Mon travail est double : produire un système utile à mon entreprise d'accueil, et contribuer à mon échelle sur l'explicabilité des modèles de language.
+Mon idée est celle-ci : plutôt que de réaliser mon mémoire silencieusement avec Claude, ChatGPT, et tous les outils dont je peux disposer, en prétendant qu'il s'agit du fruit de mon travail seul, je mets en lumière cette collaboration, et observe, dans la durée, ce qui en émerge. Je prends le problème à l'envers. Mon travail est double : produire un système utile à mon entreprise d'accueil, et contribuer à mon échelle sur l'explicabilité des modèles de language. Cela conduira in fine, à une reflexion personnelle sur l'usage de l'IA en entreprise.
 
 Il s'agit de la première fois, à ma connaissance, qu'un étudiant de l'Université Paris Dauphine documente à ce niveau de granularité, et de traçabilité un travail rédigé avec l'intelligence artificielle. Je trouve très difficile d'intégrer une "note sur l'IA" au sein du mémoire, en ceci qu'il est toujours difficile de récupérer de mesurer l'impact de les LLMs sur nos travaux, tant ils sont un puissants simulateurs d'idées, et parfois introduisent des biais dans nos raisonnements.
 
@@ -24,4 +25,4 @@ Cette section est dédiée aux observations que je fais durant le travail de pr�
 Actuellement, (au 7 Avril) je considère que le projet permettera : 
 - À Views d'acquérir une pipeline de classification optimisée sur son Dataset, qui servira aux outils d'aide à la décision que je développe au sein du média
 - D'analyser les traces des conversations entre le modèle (Claude Opus 4.6) et moi, ce qui fera l'objet d'une partie du rendu
-- De proposer une réflexion sur le travail étudiant assisté par IA
+- De proposer une réflexion sur le travail étudiant assisté par IA, et plus largement, sur le développement agentique en entreprise.
