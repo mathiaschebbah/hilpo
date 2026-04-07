@@ -36,7 +36,7 @@ Cette section est dédiée aux observations que je fais durant le travail de pr�
 ## 3. Le projet, tel que je le vois.
 
 Actuellement (au 7 avril), je considère que le projet permettra : 
-- À Views d'acquérir une pipeline de classification optimisée sur son dataset, qui servira aux outils d'aide à la décision que je développe au sein du média.
+- À Views d'acquérir une pipeline de classification optimisée sur son dataset, qui servira aux outils d'aide à la décision que je développe au sein du média, **résoudre le problème de classification sur une donnée métier.**
 - D'analyser les traces des conversations entre le modèle (Claude Opus 4.6) et moi, ce qui fera l'objet d'une partie du rendu.
 - De proposer une réflexion sur le travail étudiant assisté par IA, et plus largement, sur le développement agentique en entreprise.
 
