@@ -1,4 +1,4 @@
-# HILPO — Human-In-the-Loop Prompt Optimization
+# MILPO — Multimodal Iterative Loop Prompt Optimization
 
 Dépôt associé au mémoire de Mathias CHEBBAH, Master 1 MIAGE, Université Paris Dauphine.
 
@@ -10,9 +10,9 @@ Dans le cadre d'une alternance chez Views, ce projet répond au besoin de classi
 
 ## Méthode
 
-Nous proposons HILPO, une méthode d'optimisation itérative de prompts par boucle humain-dans-la-boucle. Un annotateur humain classe d'abord les publications via une interface de swipe, puis un script rejoue les annotations dans l'ordre de présentation et simule la boucle d'optimisation (protocole prequential). Lorsque le modèle se trompe, un agent rewriter analyse les erreurs accumulées et propose une nouvelle version du prompt, stockée et versionnée en base de données.
+Nous adaptons MILPO, une méthode d'optimisation itérative de prompts par gradient textuel inspirée de [ProTeGi (Pryzant et al. 2023)](https://arxiv.org/abs/2305.03495), à un cas industriel multimodal. Un annotateur humain (Mathias) classe d'abord les publications via une interface de swipe, puis un script rejoue les annotations dans l'ordre de présentation et simule la boucle d'optimisation (protocole prequential). Lorsque le modèle se trompe, un agent rewriter analyse les erreurs accumulées en mini-batch (B=30) et propose une nouvelle version du prompt, qui est promue ou rejetée par double évaluation sur un bloc d'évaluation. Les prompts sont stockés et versionnés en base de données.
 
-L'hypothèse est que cette boucle d'optimisation permet d'atteindre une performance de classification satisfaisante sans recourir au fine-tuning, avec un volume d'annotations réduit et un artefact interprétable : le prompt optimisé.
+L'hypothèse est que cette adaptation de ProTeGi à un cas multimodal permet d'atteindre une performance de classification satisfaisante sans recourir au fine-tuning, avec un volume d'annotations réduit et un artefact interprétable : le prompt optimisé.
 
 ## Collaboration Agent-Humain
 

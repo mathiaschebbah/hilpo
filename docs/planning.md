@@ -32,7 +32,7 @@
 | Matin (~30min) | Relance baseline B0 (`uv run python scripts/run_baseline.py`) | ✅ run id=7, **437/437 (100%), 86.7% / 65.4% / 94.5%, $2.68** |
 | Matin (~30min) | Documentation des résultats B0 + table accuracy par format (22 formats) | ✅ commits `1e8ff02` + `394f5f6` (v2.28 + v2.29) |
 | Après-midi (~5h) | Annoter ~750 posts dev (objectif réaliste révisé pour garder une charge soutenable) | ⬜ à faire |
-| Soir (2h) | Lancer simulation HILPO sur les posts annotés → premiers résultats | ⬜ à faire |
+| Soir (2h) | Lancer simulation MILPO sur les posts annotés → premiers résultats | ⬜ à faire |
 
 ### Mar 7 — Fin annotation + simulation
 | Créneau | Activité |

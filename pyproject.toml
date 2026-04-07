@@ -1,7 +1,7 @@
 [project]
-name = "hilpo"
+name = "milpo"
 version = "0.1.0"
-description = "HILPO — Human-In-the-Loop Prompt Optimization engine"
+description = "MILPO — Multimodal Iterative Loop Prompt Optimization engine"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["hilpo*"]
+include = ["milpo*"]
 
 [project.optional-dependencies]
 eval = [

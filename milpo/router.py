@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hilpo.config import (
+from milpo.config import (
     MODEL_DESCRIPTOR_FEED,
     MODEL_DESCRIPTOR_REELS,
 )

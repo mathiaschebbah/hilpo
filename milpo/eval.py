@@ -1,4 +1,4 @@
-"""Métriques d'évaluation pour le moteur HILPO."""
+"""Métriques d'évaluation pour le moteur MILPO."""
 
 from __future__ import annotations
 

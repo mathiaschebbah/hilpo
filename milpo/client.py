@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from openai import OpenAI
 
-from hilpo.config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from milpo.config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
 
 
 def get_client() -> OpenAI:

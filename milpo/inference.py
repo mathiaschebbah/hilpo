@@ -1,4 +1,4 @@
-"""Pipeline d'inférence HILPO : router → descripteur → 3 classifieurs."""
+"""Pipeline d'inférence MILPO : router → descripteur → 3 classifieurs."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from dataclasses import dataclass, field
 
 from openai import OpenAI
 
-from hilpo.agent import call_classifier, call_descriptor
-from hilpo.client import get_client
-from hilpo.config import MODEL_CLASSIFIER
-from hilpo.router import route
-from hilpo.schemas import DescriptorFeatures, PostPrediction
+from milpo.agent import call_classifier, call_descriptor
+from milpo.client import get_client
+from milpo.config import MODEL_CLASSIFIER
+from milpo.router import route
+from milpo.schemas import DescriptorFeatures, PostPrediction
 
 
 @dataclass

@@ -1,10 +1,10 @@
 ---
 name: setup
 description: >
-  Initialise le contexte du projet HILPO en début de conversation. Lit l'état du projet (CLAUDE.md, phases, stack), l'historique git récent, vérifie les services (Postgres, backend, frontend), et présente un résumé. Utiliser en début de chaque session.
+  Initialise le contexte du projet MILPO en début de conversation. Lit l'état du projet (CLAUDE.md, phases, stack), l'historique git récent, vérifie les services (Postgres, backend, frontend), et présente un résumé. Utiliser en début de chaque session.
 ---
 
-# Setup — Initialisation du contexte HILPO
+# Setup — Initialisation du contexte MILPO
 
 Au lancement de cette commande, exécute les étapes suivantes pour te mettre à jour sur l'état du projet.
 
@@ -36,7 +36,7 @@ Vérifie si Docker Postgres et les serveurs (backend/frontend) tournent :
 Présente un résumé concis à l'utilisateur :
 
 ```
-HILPO — État du projet
+MILPO — État du projet
 ======================
 Version CLAUDE.md : vX.Y
 Dernier commit    : <message>

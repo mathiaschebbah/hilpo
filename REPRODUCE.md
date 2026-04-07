@@ -1,4 +1,4 @@
-# Reproduire les résultats de HILPO
+# Reproduire les résultats de MILPO
 
 Ce guide permet de reproduire l'état actuel des résultats disponibles dans le dépôt et de documenter le protocole expérimental visé pour la Phase 3.
 
@@ -105,7 +105,7 @@ Ouvrir http://localhost:5173. L'API est proxifiée automatiquement vers le backe
 
 ## 7. Reproduire les expériences
 
-À l'état actuel du dépôt, l'import, l'annotation et la baseline B0 sont directement rejouables. La simulation HILPO, les métriques agrégées et les figures sont documentées ci-dessous comme interface cible, mais les scripts correspondants ne sont pas encore présents dans la repo au 5 avril 2026.
+À l'état actuel du dépôt, l'import, l'annotation et la baseline B0 sont directement rejouables. La simulation MILPO, les métriques agrégées et les figures sont documentées ci-dessous comme interface cible, mais les scripts correspondants ne sont pas encore présents dans la repo au 5 avril 2026.
 
 ### Phase 1 — Annotations (données fournies)
 
@@ -119,7 +119,7 @@ uv run python scripts/run_baseline.py
 
 Évalue le prompt v0 sur les 437 posts test. Résultat stocké dans `simulation_runs`.
 
-### Phase 3 — Simulation HILPO
+### Phase 3 — Simulation MILPO
 
 Le script `scripts/run_simulation.py` est implémenté et fonctionnel :
 
@@ -154,7 +154,7 @@ uv run python scripts/figures.py --input results/ --output figures/
 
 **Figures générées :**
 1. `convergence.pdf` — accuracy en rolling window vs posts traités (dev), rewrites annotés
-2. `comparison.pdf` — Tableau B0 vs HILPO vN (accuracy, F1 macro, p-value McNemar)
+2. `comparison.pdf` — Tableau B0 vs MILPO vN (accuracy, F1 macro, p-value McNemar)
 3. `ablation_batch.pdf` — Effet du batch size (B=1, 10, 30, 50)
 4. `confusion_matrix.pdf` — Matrice de confusion visual_format v0 vs vN
 

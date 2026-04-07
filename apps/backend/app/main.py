@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.exceptions import register_exception_handlers
 from app.routers import annotations, posts, taxonomy
 
-app = FastAPI(title="HILPO", version="0.1.0")
+app = FastAPI(title="MILPO", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

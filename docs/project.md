@@ -2,36 +2,36 @@
 
 Mémoire de fin d'études de Mathias Chebbah (Master 1 MIAGE, Université Paris Dauphine), en alternance chez Views (média gen-z).
 
-Système d'annotation agentique pour classifier des posts Instagram via une boucle humain-dans-la-boucle qui optimise itérativement le prompt du classificateur. L'humain annote d'abord, puis un script simule la boucle d'optimisation (protocole prequential). Le système remplace une heuristique de classification v0 (imprécise) par une pipeline performante, applicable en production chez Views.
+MILPO est une boucle d'optimisation s'inspirant de ProTeGi (Pryzant et al. 2023), utilisant les capacités multimodales de Gemini 3 Flash Preview (descripteur), Qwen 3.5 Flash (classifieurs) et GPT-5.4 (rewriter). L'idée est simple : on utilise l'apport de ProTeGi pour régler le problème de classification multimodale de Views, avec 21 065 posts dont 2 000 annotés (~9,5%). On a beaucoup de comparaisons : 60 formats visuels, 15 catégories éditoriales et 2 stratégies (Organic / Brand Content). On veut régler ce problème car l'annotation est coûteuse, donc on ne peut pas tout annoter ; on veut une généralisation sur un petit dataset.
 
 ## Problématique
 
-Comment optimiser itérativement un prompt de classification multimodale en exploitant le feedback d'un annotateur humain, de manière à surpasser un zero-shot tout en limitant le volume d'annotations nécessaire ?
+Comment construire et optimiser un pipeline de classification multimodale pour catégoriser ~21 000 publications Instagram selon une taxonomie métier subjective (60 formats visuels, 15 catégories éditoriales, 2 stratégies), en maximisant la performance sur un budget d'annotations limité (~9,5% du dataset) ?
 
 ## Hypothèses
 
-> **H1** : L'optimisation itérative d'un prompt par confrontation avec un annotateur humain (boucle HILPO, batch B=30) permet d'atteindre une accuracy de classification multimodale significativement supérieure au zero-shot (p < 0.05), avec un volume d'annotations ≤ 200 par axe de classification.
+> **H1 — Convergence empirique** : la boucle MILPO (gradient textuel par mini-batch B=30 + rollback sur double évaluation) améliore significativement (p < 0.05, test de McNemar) le baseline B0 (prompts v0 zero-shot) sur le split test, après optimisation sur le split dev annoté.
 
-> **H2** : Le prompt optimisé par HILPO constitue un artefact interprétable et transférable : appliqué à un split test non vu pendant l'optimisation, il conserve ≥ 90% de sa performance par rapport au split dev.
+> **H2 — Robustesse au transfert** : le prompt vN (final après optimisation sur le dev) conserve ≥ 90% des gains observés sur le dev quand il est appliqué au split test non vu pendant l'optimisation.
+
+> **H3 — Efficacité multimodale** : l'architecture en deux étapes (descripteur multimodal + 3 classifieurs text-only en parallèle) permet de réduire le coût d'inférence (tokens images/vidéos payés une seule fois) tout en préservant la qualité de classification par rapport à une approche directe avec un seul LLM multimodal.
 
 ## Positionnement
 
-HILPO se distingue des travaux existants sur **quatre axes** :
+MILPO se positionne comme une **adaptation méthodologique** de ProTeGi (Pryzant et al. 2023) à un cas industriel multimodal. Trois éléments le distinguent des travaux existants :
 
-1. **L'humain annote les données, pas le prompt.** Contrairement à iPrOp (Li & Klinger, 2025) où l'humain choisit entre des prompts candidats, dans HILPO l'humain corrige les classifications. Le signal d'erreur est plus fin : correction instance-par-instance, pas choix global entre instructions.
+1. **Adaptation multimodale d'un optimiseur de prompt par gradient textuel.** ProTeGi opère sur du texte pur, sur 4 datasets de classification binaire (Ethos hate speech, Liar fake news, ArSarcasm, jailbreak detection). MILPO adapte le paradigme à un pipeline multimodal (image + vidéo + audio + caption) via un découpage **descripteur multimodal + 3 classifieurs text-only en parallèle**, qui économise le coût des tokens visuels (payés une seule fois par post) et améliore la traçabilité des features extraites. Voir [related_work.md](related_work.md) pour la comparaison méthodologique détaillée avec ProTeGi.
 
-2. **Domaine multimodal à taxonomie subjective.** Les 68 formats visuels (44 FEED + 16 REELS + 8 STORY) et 15 catégories éditoriales de Views sont des classes définies par un média, pas par un benchmark académique. La taxonomie est instable, culturellement située — un terrain où l'oracle humain est plus précieux que les métriques automatiques.
+2. **Étude empirique sur taxonomie métier subjective à longue traîne.** Les benchmarks ProTeGi sont des classifications binaires sur des datasets publics équilibrés. MILPO évalue sur une taxonomie multi-classe (60 formats visuels en scope FEED/REELS + 15 catégories éditoriales + 2 stratégies) construite par un média réel (Views), avec une distribution en loi de puissance : 8 formats couvrent 82% du dataset, 19 formats à ≤ 1 occurrence dans le test. Cette différence de structure de tâche est qualitativement plus difficile et plus représentative des cas d'usage industriels.
 
-3. **Le prompt est l'artefact final, avec séparation explicite.** Le prompt HILPO est composé de deux blocs : les descriptions taxonomiques (rédigées par l'expert métier, fixes) et les instructions de classification (optimisées par la boucle). Contrairement au fine-tuning, l'artefact est lisible, auditable et transférable. On peut analyser précisément ce que la boucle a appris (instructions) vs ce que l'humain savait déjà (descriptions).
-
-4. **Transfert zero-shot via les descriptions.** Contrairement aux approches supervisées qui nécessitent des exemples d'entraînement pour chaque classe, HILPO peut classifier des formats jamais rencontrés pendant l'optimisation — il suffit qu'une description textuelle existe dans le prompt. L'optimisation des instructions généralise au-delà des classes vues : un format rare absent du dev peut être correctement classifié dans le test grâce à sa description. C'est un avantage structurel par rapport aux baselines supervisées (CLIP + LogReg, few-shot) qui échouent nécessairement sur les classes sans exemples.
+3. **Pipeline production-ready et reproductible.** MILPO est implémenté de bout en bout : annotation par interface swipe (frontend React), backend FastAPI, BDD PostgreSQL versionnée par migrations, signature GCS V4 pour les médias privés, prompts versionnés et tracés par run de simulation, ablations rejouables sans réannotation. L'ensemble est open-source et documenté pour reproduction (voir [REPRODUCE.md](../REPRODUCE.md)).
 
 ## Claim visé
 
-> Nous proposons HILPO, une méthode d'optimisation itérative de prompts guidée par un annotateur humain pour la classification multimodale de contenus sur les réseaux sociaux. Sur un corpus de 2 000 publications Instagram annotées selon 3 axes (60 formats visuels en scope expérimental FEED/REELS, 15 catégories éditoriales, 2 stratégies ; taxonomie complète : 68 formats), nous montrons que HILPO atteint un F1 macro de [X]% avec [Y] annotations, là où le zero-shot plafonne à [Z]% et le few-shot 5-shot atteint [W]%. Le prompt optimisé, artefact interprétable et versionné, conserve [V]% de sa performance sur le split test non vu pendant l'optimisation. L'analyse qualitative révèle que les gains proviennent principalement de [insight clé].
+> Nous adaptons l'optimiseur de prompt par gradient textuel (ProTeGi, Pryzant et al. 2023) à un pipeline de classification multimodale industriel chez le média Views. Sur un corpus de 21 065 publications Instagram dont 2 000 sont annotées (~9,5%), nous évaluons MILPO sur 3 axes de classification (60 formats visuels en scope FEED/REELS, 15 catégories éditoriales, 2 stratégies Organic/Brand Content). Le baseline B0 (prompts v0 zero-shot) atteint **86,7% / 65,4% / 94,5%** (catégorie / format visuel / stratégie) sur le split test. Nous étudions empiriquement (i) l'effet de l'optimisation MILPO sur ces accuracies, (ii) l'efficacité en annotations (combien d'annotations pour atteindre un plateau de performance ?), (iii) la robustesse au transfert (conservation des gains sur le split test non vu pendant l'optimisation), et (iv) la sensibilité à la taille de batch (ablations B=1, 10, 30, 50). L'analyse qualitative documente quels types d'erreurs sont corrigés par la boucle d'optimisation et lesquels résistent — en particulier sur les formats à faible support (longue traîne).
 
 ## Contraintes
 
-- **Deadline** : 18 avril 2026
-- **Livrable** : rapport de mémoire + code fonctionnel + résultats expérimentaux
-- **État au 6 avril 2026** : Phase 1 ✅ (541 annotations, test complet). Phase 2 ✅ — pipeline descripteur (Gemini 3 Flash Preview) + 3 classifieurs (Qwen 3.5 Flash + tool calling), **B0 stabilisé : 86.7% / 65.4% / 94.5% (run id=7, 437/437 posts, $2.68, 25.4 min)**, prompts v0 lockés en BDD via la migration [`006_seed_prompts_v0.sql`](docs/../apps/backend/migrations/006_seed_prompts_v0.sql). Phase 3 ✅ implémentée côté code (rewriter + simulation prequential, `load_prompt_state_from_db` — plus de hardcoding), run complet sur le dev en attente des annotations.
+- **Deadline mémoire** : 18 avril 2026
+- **Livrable** : rapport de mémoire + code fonctionnel + résultats expérimentaux reproductibles
+- **État au 7 avril 2026** : Phase 1 ✅ (665 annotations en BDD : test 437/437 ✅, dev 228/1563 en cours d'annotation). Phase 2 ✅ — pipeline descripteur (Gemini 3 Flash Preview) + 3 classifieurs (Qwen 3.5 Flash + tool calling), **B0 stabilisé : 86,7% / 65,4% / 94,5% (run id=7, 437/437 posts, $2.68, 25,4 min)**, prompts v0 lockés en BDD via la migration [`006_seed_prompts_v0.sql`](../apps/backend/migrations/006_seed_prompts_v0.sql). Phase 3 ✅ implémentée côté code (rewriter GPT-5.4 + simulation prequential, `load_prompt_state_from_db` — plus de hardcoding), run complet sur le dev en attente de la fin des annotations.

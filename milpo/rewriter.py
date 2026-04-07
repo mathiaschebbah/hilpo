@@ -1,4 +1,4 @@
-"""Agent rewriter HILPO — analyse les erreurs et propose un nouveau prompt."""
+"""Agent rewriter MILPO — analyse les erreurs et propose un nouveau prompt."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from hilpo.client import get_client
-from hilpo.config import MODEL_REWRITER
-from hilpo.errors import LLMCallError
-from hilpo.schemas import RewritePayload, build_json_schema_response_format
+from milpo.client import get_client
+from milpo.config import MODEL_REWRITER
+from milpo.errors import LLMCallError
+from milpo.schemas import RewritePayload, build_json_schema_response_format
 
-log = logging.getLogger("hilpo")
+log = logging.getLogger("milpo")
 
 MAX_SYNC_RETRIES = 3
 

@@ -1,4 +1,4 @@
-"""Configuration du moteur HILPO — charge .env automatiquement."""
+"""Configuration du moteur MILPO — charge .env automatiquement."""
 
 import os
 from pathlib import Path

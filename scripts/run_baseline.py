@@ -1,4 +1,4 @@
-"""Évaluation HILPO sur le split test.
+"""Évaluation MILPO sur le split test.
 
 Usage :
     .venv/bin/python scripts/run_baseline.py
@@ -20,8 +20,8 @@ import sys
 import time
 from dataclasses import dataclass
 
-from hilpo.async_inference import async_classify_batch
-from hilpo.db import (
+from milpo.async_inference import async_classify_batch
+from milpo.db import (
     format_descriptions,
     get_conn,
     get_active_prompt,
@@ -33,8 +33,8 @@ from hilpo.db import (
     store_api_call,
     store_prediction,
 )
-from hilpo.gcs import sign_all_posts_media
-from hilpo.inference import PostInput, PromptSet
+from milpo.gcs import sign_all_posts_media
+from milpo.inference import PostInput, PromptSet
 
 logging.basicConfig(
     level=logging.INFO,
@@ -224,7 +224,7 @@ def store_results(conn, results, post_inputs, prompt_ids, run_id):
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Évalue la pipeline HILPO sur le split test")
+    parser = argparse.ArgumentParser(description="Évalue la pipeline MILPO sur le split test")
     parser.add_argument(
         "--prompts",
         choices=("v0", "active"),
@@ -257,7 +257,7 @@ async def main():
     log.info("Posts test : %d", len(raw_posts))
 
     # 2. Simulation run
-    from hilpo.config import MODEL_DESCRIPTOR_FEED, MODEL_DESCRIPTOR_REELS, MODEL_CLASSIFIER
+    from milpo.config import MODEL_DESCRIPTOR_FEED, MODEL_DESCRIPTOR_REELS, MODEL_CLASSIFIER
     run_id = create_run(conn, {
         "name": f"{run_label}_{args.prompts}_test",
         "split": "test",

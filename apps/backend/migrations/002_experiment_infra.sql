@@ -1,4 +1,4 @@
--- HILPO — Migration 002 : infrastructure expérimentale
+-- MILPO — Migration 002 : infrastructure expérimentale
 -- Corrige la reproductibilité, les splits, le match auto, et prépare les simulations.
 
 -- =============================================================

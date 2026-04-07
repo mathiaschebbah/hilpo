@@ -1,4 +1,4 @@
--- HILPO — Migration 003 : descriptions taxonomie
+-- MILPO — Migration 003 : descriptions taxonomie
 -- Ajoute une colonne description aux lookups et crée la table strategies.
 
 -- =============================================================

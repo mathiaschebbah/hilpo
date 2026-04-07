@@ -1,4 +1,4 @@
-"""Agents HILPO : descripteur multimodal et classifieurs text-only."""
+"""Agents MILPO : descripteur multimodal et classifieurs text-only."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ import time
 
 from openai import OpenAI
 
-from hilpo.errors import LLMCallError
-from hilpo.schemas import (
+from milpo.errors import LLMCallError
+from milpo.schemas import (
     ClassifierDecision,
     DescriptorFeatures,
     build_classifier_tool,
     build_json_schema_response_format,
 )
 
-log = logging.getLogger("hilpo")
+log = logging.getLogger("milpo")
 
 MAX_SYNC_RETRIES = 3
 
@@ -42,7 +42,7 @@ def build_descriptor_messages(
         media_urls: URLs signées GCS (images ou vidéos).
         media_types: Type de chaque média ('IMAGE' ou 'VIDEO').
         caption: Caption du post Instagram.
-        instructions: Instructions I_t optimisables par HILPO.
+        instructions: Instructions I_t optimisables par MILPO.
         descriptions_taxonomiques: Critères discriminants Δ^m.
     """
     system = (

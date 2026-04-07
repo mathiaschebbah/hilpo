@@ -1,16 +1,16 @@
-# HILPO — Human-In-the-Loop Prompt Optimization
+# MILPO — Multimodal Iterative Loop Prompt Optimization
 
-> Version **2.29** — 2026-04-06
+> Version **3.0** — 2026-04-07
 
 ## Double dimension du projet
 
-1. **Recherche HILPO** : peut-on classifier des données multimodales sans gros dataset, en optimisant itérativement un prompt via une boucle humain-dans-la-boucle ?
+1. **Recherche MILPO** : peut-on adapter une méthode d'optimisation de prompt par gradient textuel (style ProTeGi, Pryzant et al. 2023) à un cas industriel multimodal de classification (60 formats visuels + 15 catégories + 2 stratégies sur les posts Instagram du média Views), avec un volume d'annotations limité (~9,5% du dataset) ?
 2. **Collaboration Agent-Humain** : le projet lui-même est construit via une collaboration structurée entre Claude Code et l'humain. Les hooks (validation CLAUDE.md, AskUserQuestion) incarnent le paradigme humain-dans-la-boucle au niveau du développement. La progression est traçable dans l'historique git.
 
 ## Index
 
 - [Projet](docs/project.md) — hypotheses falsifiables, positionnement, claim vise
-- [Etat de l'art](docs/related_work.md) — APE, DSPy, iPrOp, positionnement HILPO
+- [Etat de l'art](docs/related_work.md) — APE, DSPy, iPrOp, positionnement MILPO
 - [Stack](docs/stack.md) — technologies et choix techniques
 - [Architecture](docs/architecture.md) — agents, pipeline, formalisation mathematique
 - [Schema BDD](docs/schema.md) — tables, relations, contraintes
@@ -26,8 +26,8 @@
 ## Monorepo
 
 ```
-hilpo/                 ← repo root
-├── hilpo/             ← package Python (engine HILPO)
+milpo/                 ← repo root
+├── milpo/             ← package Python (engine MILPO)
 ├── apps/
 │   ├── frontend/      ← React (interface de swipe)
 │   └── backend/       ← FastAPI (API)
@@ -40,13 +40,14 @@ hilpo/                 ← repo root
 
 ## Repo
 
-- **GitHub** : [mathiaschebbah/hilpo](https://github.com/mathiaschebbah/hilpo) (open-source)
+- **GitHub** : [mathiaschebbah/milpo](https://github.com/mathiaschebbah/milpo) (open-source — repo à renommer côté GitHub Settings, redirect automatique depuis l'ancien `hilpo`)
 - **Auteur** : Mathias Chebbah, M1 MIAGE, Université Paris Dauphine
 
 ## Changelog
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| 3.0 | 2026-04-07 | **Renommage HILPO → MILPO + reframing complet du mémoire**. (1) **Rename** : HILPO → MILPO (Multimodal Iterative Loop Prompt Optimization), 27 fichiers modifiés, dossier `hilpo/` → `milpo/`, package Python réinstallé en mode editable, scripts validés. PostgreSQL credentials et variables `HILPO_*` gardées telles quelles (décision pragmatique pour préserver les données et le `.env` local). Changelog historique et snapshots `agent_perspective.md` préservés. (2) **Reframing project.md** : nouvelle problématique ancrée dans le besoin industriel (21 065 posts, 60 formats × 15 catégories × 2 stratégies, ~9,5% annotés), hypothèses H1/H2/H3 reformulées (convergence empirique, robustesse au transfert, efficacité multimodale), positionnement ré-écrit en 3 axes défendables (adaptation multimodale ProTeGi-like, étude empirique sur taxonomie subjective à longue traîne, pipeline production-ready), claim recentré sur l'étude empirique avec chiffres B0 réels (86,7% / 65,4% / 94,5%). (3) **Reframing related_work.md** : section ProTeGi devient le voisin méthodologique principal (6 sous-sections détaillées + tableau de comparaison point par point), iPrOp et autres reframés en moins proches. Note explicite que MILPO n'est pas un système human-in-the-loop au sens strict de la littérature. (4) **Architecture.md** : formalisation mathématique en LaTeX KaTeX (notations propres, pseudocode formel), comparaison directe avec l'algorithme ProTeGi (Algorithm 1 verbatim). |
 | 2.29 | 2026-04-06 | Ajout table "Visual_format — accuracy par format (≥3 occ)" dans `evaluation.md` : 22 formats listés avec deltas vs run id=2, scope FEED/REELS, observations sur l'effet non uniforme du switch Gemini 3 (gros gains REELS `reel_wrap_up` +25 / `reel_voix_off` +6, mais régressions `post_chiffre` -23 et `post_selection` -15). Ces régressions deviennent cibles prioritaires pour la boucle HILPO. |
 | 2.28 | 2026-04-06 | **B0 stabilisé** — run id=7, **437/437 posts (100% couverture)**, accuracies **86.7% / 65.4% / 94.5%**, coût **$2.68**, 25.4 min. Gain principal vs run id=2 obsolète : visual_format REELS **+4.6 pts** (46.2 → 50.8) grâce à Gemini 3 Flash Preview qui perçoit mieux les vidéos. Patterns d'erreur identiques (post_news ← mood, post_chiffre ← news, etc.) — confirme que ce sont des limitations des prompts v0 que HILPO doit corriger en simulation. Coût stocké en BDD via `simulation_runs.total_cost_usd`. Phase 2 ✅. Docs synchronisés (evaluation, project, phases). |
 | 2.27 | 2026-04-06 | Switch descripteur (FEED+REELS) vers `google/gemini-3-flash-preview` après diagnostic des 5 posts échoués au run id=6 (Qwen 3.5 Flash limite carousel ~8 images, Gemini 2.5 Flash via Google AI Studio instable sous concurrence). Validation empirique : 18/18 sous concurrence (10 parallèles), 3/3 carousels 20 slides, audio détecté correctement (commit `7e352ab`). Coût ~$0.50/M (vs $0.065-0.30/M précédemment), justifié par la fiabilité. Classifieurs restent sur Qwen 3.5 Flash text-only via tool calling. Aussi fix : compteur `error_count` propagé dans `async_classify_batch.on_progress(done, total, errors)`. Docs synchronisés (architecture, stack, evaluation, agent_perspective). |

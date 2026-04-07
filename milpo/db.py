@@ -1,4 +1,4 @@
-"""Accès BDD pour le moteur HILPO (psycopg sync)."""
+"""Accès BDD pour le moteur MILPO (psycopg sync)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.rows import dict_row
 
-from hilpo.config import DATABASE_DSN
+from milpo.config import DATABASE_DSN
 
 
 def get_conn() -> psycopg.Connection:

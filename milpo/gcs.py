@@ -1,4 +1,4 @@
-"""Signature d'URLs GCS pour le package hilpo."""
+"""Signature d'URLs GCS pour le package milpo."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any, cast
 from urllib.parse import urlparse
 
-from hilpo.config import GCS_SIGNING_SA_EMAIL
+from milpo.config import GCS_SIGNING_SA_EMAIL
 
 logger = logging.getLogger(__name__)
 

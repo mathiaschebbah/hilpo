@@ -1,4 +1,4 @@
-"""Exceptions métier du moteur HILPO."""
+"""Exceptions métier du moteur MILPO."""
 
 
 class LLMCallError(RuntimeError):

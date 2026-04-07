@@ -25,7 +25,7 @@ Fichiers :
 | `predictions` | Prédictions par agent + match auto-calculé par trigger |
 | `rewrite_logs` | Historique des réécritures de prompt (avant/après, raisonnement) |
 | `api_calls` | Traçabilité complète des appels API (tokens, coût, latence) |
-| `simulation_runs` | Runs de baseline et de simulation HILPO offline avec config, résultats, coûts |
+| `simulation_runs` | Runs de baseline et de simulation MILPO offline avec config, résultats, coûts |
 | `prompt_metrics` | Vue — accuracy agrégée par version de prompt × agent × simulation |
 
 ## Descriptions taxonomie

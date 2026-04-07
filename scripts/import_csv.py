@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import des CSV dans PostgreSQL pour HILPO."""
+"""Import des CSV dans PostgreSQL pour MILPO."""
 
 import csv
 import sys

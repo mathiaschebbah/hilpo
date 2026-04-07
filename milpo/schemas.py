@@ -1,4 +1,4 @@
-"""Schemas Pydantic pour le pipeline HILPO."""
+"""Schemas Pydantic pour le pipeline MILPO."""
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ def build_json_schema_response_format(name: str, schema: dict) -> dict:
 
 
 def build_classifier_response_schema(labels: list[str]) -> dict:
-    """Schéma strict (label + confidence) pour un classifieur HILPO.
+    """Schéma strict (label + confidence) pour un classifieur MILPO.
 
     Réutilisé par build_classifier_tool() pour les paramètres du tool function.
     """
@@ -141,7 +141,7 @@ def build_classifier_response_schema(labels: list[str]) -> dict:
 
 
 def build_classifier_tool(axis: str, labels: list[str]) -> dict:
-    """Construit la définition tool/function pour un classifieur HILPO.
+    """Construit la définition tool/function pour un classifieur MILPO.
 
     On utilise l'API tool calling (function calling) plutôt que
     response_format=json_schema parce que tool calling est universellement

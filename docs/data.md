@@ -24,7 +24,7 @@ core_posts.ig_media_id  ←1:N→  core_post_media.parent_ig_media_id
 
 ## Heuristique v0
 
-Les catégories du CSV proviennent d'une pipeline de classification précédente construite par Mathias chez Views. Cette heuristique est **imprécise et incomplète**. HILPO vise à la remplacer par une pipeline performante et applicable en production.
+Les catégories du CSV proviennent d'une pipeline de classification précédente construite par Mathias chez Views. Cette heuristique est **imprécise et incomplète**. MILPO vise à la remplacer par une pipeline performante et applicable en production.
 
 L'interface d'annotation pré-remplira les catégories v0 — l'humain confirme ou corrige.
 
@@ -66,11 +66,11 @@ Le split test **préserve fidèlement** la distribution du dataset complet (20K 
 
 ### Implications méthodologiques
 
-Le F1 macro sera reporté **avec et sans les classes rares** (< 5 occurrences) pour isoler l'effet de la longue traîne. Ce n'est pas un biais d'échantillonnage — c'est la distribution réelle du dataset. C'est un argument pour HILPO : les méthodes supervisées échouent sur la longue traîne (pas d'exemples), HILPO peut classifier via les descriptions taxonomiques.
+Le F1 macro sera reporté **avec et sans les classes rares** (< 5 occurrences) pour isoler l'effet de la longue traîne. Ce n'est pas un biais d'échantillonnage — c'est la distribution réelle du dataset. C'est un argument pour MILPO : les méthodes supervisées échouent sur la longue traîne (pas d'exemples), MILPO peut classifier via les descriptions taxonomiques.
 
 ## Travail sur la taxonomie — Observations d'annotation
 
-La taxonomie a évolué pendant l'annotation au contact des données réelles. Ce travail itératif est documenté ici car il informe directement la qualité des descriptions injectées dans le prompt HILPO (Δ^m).
+La taxonomie a évolué pendant l'annotation au contact des données réelles. Ce travail itératif est documenté ici car il informe directement la qualité des descriptions injectées dans le prompt MILPO (Δ^m).
 
 ### Fusions réalisées
 

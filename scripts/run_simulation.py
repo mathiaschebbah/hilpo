@@ -1,4 +1,4 @@
-"""Simulation HILPO prequential — boucle d'optimisation de prompt.
+"""Simulation MILPO prequential — boucle d'optimisation de prompt.
 
 Usage :
     uv run python scripts/run_simulation.py
@@ -22,8 +22,8 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from hilpo.config import MODEL_REWRITER
-from hilpo.db import (
+from milpo.config import MODEL_REWRITER
+from milpo.db import (
     format_descriptions,
     get_active_prompt,
     get_conn,
@@ -39,13 +39,13 @@ from hilpo.db import (
     store_prediction,
     store_rewrite_log,
 )
-from hilpo.eval import accuracy
-from hilpo.errors import LLMCallError
-from hilpo.gcs import sign_all_posts_media
-from hilpo.inference import ApiCallLog, PipelineResult, PostInput, PromptSet, classify_post
-from hilpo.rewriter import ErrorCase, RewriteResult, rewrite_prompt
+from milpo.eval import accuracy
+from milpo.errors import LLMCallError
+from milpo.gcs import sign_all_posts_media
+from milpo.inference import ApiCallLog, PipelineResult, PostInput, PromptSet, classify_post
+from milpo.rewriter import ErrorCase, RewriteResult, rewrite_prompt
 
-# Les 6 couples (agent, scope) qui pilotent l'optimisation HILPO.
+# Les 6 couples (agent, scope) qui pilotent l'optimisation MILPO.
 # Source de vérité du contenu : BDD (migration 006_seed_prompts_v0.sql).
 PROMPT_KEYS: list[tuple[str, str | None]] = [
     ("descriptor", "FEED"),
@@ -600,7 +600,7 @@ def display_rolling(cursor, all_matches, window=50):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Simulation HILPO prequential")
+    parser = argparse.ArgumentParser(description="Simulation MILPO prequential")
     parser.add_argument("-B", "--batch-size", type=int, default=30)
     parser.add_argument("--delta", type=float, default=0.02)
     parser.add_argument("--patience", type=int, default=3)
@@ -628,7 +628,7 @@ def main():
     try:
         # ── Header ──
         log.info("=" * 60)
-        log.info("  HILPO — Simulation prequential")
+        log.info("  MILPO — Simulation prequential")
         log.info("  B=%d  delta=%.0f%%  patience=%d  eval_window=%d",
                  args.batch_size, args.delta * 100, args.patience, args.eval_window)
         if args.dry_run:
@@ -658,7 +658,7 @@ def main():
 
         # ── 3. Simulation run ──
         run_id = create_run(conn, {
-            "name": f"HILPO_B{args.batch_size}" + ("_dryrun" if args.dry_run else ""),
+            "name": f"MILPO_B{args.batch_size}" + ("_dryrun" if args.dry_run else ""),
             "split": "dev",
             "batch_size": args.batch_size,
             "delta": args.delta,
@@ -936,7 +936,7 @@ def main():
 
         log.info("")
         log.info("=" * 60)
-        log.info("  RÉSULTATS SIMULATION HILPO")
+        log.info("  RÉSULTATS SIMULATION MILPO")
         log.info("=" * 60)
         log.info("  Posts scorés   : %d", n_processed)
         log.info("  Posts ignorés  : %d (échec LLM après retries)", skipped_classification_posts)

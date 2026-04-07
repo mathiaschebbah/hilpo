@@ -7,7 +7,7 @@
 
 ## Contexte
 
-Le projet HILPO charge les instructions I_t de chaque agent × scope depuis la table `prompt_versions` en BDD. Les prompts v0 sont le **point de départ** de la boucle d'optimisation : le baseline B0 (`scripts/run_baseline.py`) les utilise tels quels sur le split test, et la simulation (`scripts/run_simulation.py`) les charge comme état initial du `PromptState` avant de lancer la boucle de rewrite.
+Le projet MILPO charge les instructions I_t de chaque agent × scope depuis la table `prompt_versions` en BDD. Les prompts v0 sont le **point de départ** de la boucle d'optimisation : le baseline B0 (`scripts/run_baseline.py`) les utilise tels quels sur le split test, et la simulation (`scripts/run_simulation.py`) les charge comme état initial du `PromptState` avant de lancer la boucle de rewrite.
 
 Avant le commit courant, les prompts v0 vivaient en double : dans `hilpo/prompts_v0.py` (code Python hardcodé) **et** en BDD via un `ensure_prompts_v0()` qui poussait le fichier vers la BDD au lancement de chaque run. Cette duplication a provoqué une incohérence après le commit `d2e84e9` (Enforce strict JSON schemas) : le code Python avait été mis à jour, mais la BDD contenait toujours l'ancienne version — et `ensure_prompts_v0()` ne mettait rien à jour si les prompts existaient déjà.
 

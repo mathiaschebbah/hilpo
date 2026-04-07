@@ -24,7 +24,7 @@ def main():
     message = """**INSTRUCTION OBLIGATOIRE — Exécute les étapes suivantes avant de répondre à l'utilisateur.**
 
 1. **Audit avec sub-agent** : lance des sub-agents Explore pour comparer les fichiers `docs/` avec l'état actuel du code et du projet. Le sub-agent doit vérifier :
-   - `docs/architecture.md` vs le code réel (apps/backend/, apps/frontend/, hilpo/)
+   - `docs/architecture.md` vs le code réel (apps/backend/, apps/frontend/, milpo/)
    - `docs/schema.md` vs le schéma BDD actuel (tables, colonnes, contraintes)
    - `docs/phases.md` vs l'avancement réel (annotations, phases implémentées)
    - `docs/stack.md` vs les dépendances réelles (pyproject.toml, package.json)

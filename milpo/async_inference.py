@@ -1,4 +1,4 @@
-"""Pipeline d'inférence HILPO async — batch processing."""
+"""Pipeline d'inférence MILPO async — batch processing."""
 
 from __future__ import annotations
 
@@ -9,21 +9,21 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-log = logging.getLogger("hilpo")
+log = logging.getLogger("milpo")
 
-from hilpo.config import (
+from milpo.config import (
     MODEL_CLASSIFIER,
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
 )
-from hilpo.agent import (
+from milpo.agent import (
     build_classifier_messages,
     build_descriptor_messages,
     parse_classifier_arguments,
 )
-from hilpo.inference import ApiCallLog, PostInput, PromptSet, PipelineResult
-from hilpo.router import route
-from hilpo.schemas import (
+from milpo.inference import ApiCallLog, PostInput, PromptSet, PipelineResult
+from milpo.router import route
+from milpo.schemas import (
     DescriptorFeatures,
     PostPrediction,
     build_classifier_tool,

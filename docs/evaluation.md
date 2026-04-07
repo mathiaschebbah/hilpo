@@ -13,19 +13,19 @@ Rapportés sur 1 run principal (contrainte de coût API). La variance est adress
 
 ## Significativité statistique
 
-- Test de McNemar (paire par paire) entre B0 et HILPO vN sur le test set
+- Test de McNemar (paire par paire) entre B0 et MILPO vN sur le test set
 - p-values rapportées, seuil alpha = 0.05
 
-## Protocole B0 → HILPO → BN
+## Protocole B0 → MILPO → BN
 
 Le protocole repose sur la comparaison de deux runs sur le **même test set** (437 posts) :
 
 1. **Annotation** : l'humain annote le dev (1 563 posts) en aveugle (sans voir les prédictions)
 2. **B0** (fait) : prompt v0 (écrit à la main) évalué sur test → accuracy baseline
-3. **Simulation HILPO** : replay séquentiel des annotations dev dans l'ordre de présentation. Protocole prequential : le prompt évolue v0 → v1 → ... → vN via le rewriter (B=30, delta=2%, patience=3).
+3. **Simulation MILPO** : replay séquentiel des annotations dev dans l'ordre de présentation. Protocole prequential : le prompt évolue v0 → v1 → ... → vN via le rewriter (B=30, delta=2%, patience=3).
 4. **BN** : prompt vN (dernier prompt actif après convergence) évalué sur test → accuracy finale
 
-La différence BN - B0 est directement attribuable à HILPO. Même test set, même pipeline, même descripteur, mêmes descriptions taxonomiques — seules les instructions I_t changent.
+La différence BN - B0 est directement attribuable à MILPO. Même test set, même pipeline, même descripteur, mêmes descriptions taxonomiques — seules les instructions I_t changent.
 
 Chaque run est stocké dans `simulation_runs` avec sa config, ses métriques, et son coût. Reproductible.
 
@@ -78,7 +78,7 @@ Les REELS sont significativement plus durs que les FEED sur catégorie et visual
 | post_interview → post_blueprint | 3 | Confusion gabarit. |
 | post_news → post_serie_mood_texte | 3 | |
 
-Ces patterns sont **identiques aux observations du run id=2 (pré-fix)** — ce sont des limitations des **prompts v0**, pas du modèle. C'est exactement ce que la boucle HILPO doit corriger en simulation.
+Ces patterns sont **identiques aux observations du run id=2 (pré-fix)** — ce sont des limitations des **prompts v0**, pas du modèle. C'est exactement ce que la boucle MILPO doit corriger en simulation.
 
 ### Visual_format — accuracy par format (≥ 3 occurrences test)
 
@@ -115,7 +115,7 @@ Ces patterns sont **identiques aux observations du run id=2 (pré-fix)** — ce 
 - **Régressions notables** sur `post_chiffre` (-23) et `post_selection` (-15) — Gemini 3 a tendance à les confondre avec `post_news` et `post_serie_mood_texte` respectivement. Hypothèse : Gemini 3 priorise davantage le texte d'actualité visible que le chiffre marquant comme signal.
 - **Stabilité** sur les formats rares à 0% (`post_wrap_up`, `post_en_savoir_plus`) — ils restent invisibles, absorbés par les formats dominants.
 
-Le gain net `+1.1 pt sur visual_format global` masque ces compensations. Ces régressions sur `post_chiffre` et `post_selection` deviennent des **cibles prioritaires pour la boucle HILPO** : ce sont des cas où l'instruction I_t actuelle gagne à être affinée pour mieux discriminer. Les gains sur les REELS, eux, sont structurels (modèle plus capable) et ne nécessitent pas d'optimisation supplémentaire.
+Le gain net `+1.1 pt sur visual_format global` masque ces compensations. Ces régressions sur `post_chiffre` et `post_selection` deviennent des **cibles prioritaires pour la boucle MILPO** : ce sont des cas où l'instruction I_t actuelle gagne à être affinée pour mieux discriminer. Les gains sur les REELS, eux, sont structurels (modèle plus capable) et ne nécessitent pas d'optimisation supplémentaire.
 
 ### Coût détaillé
 
@@ -206,7 +206,7 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 ## 4 figures indispensables
 
 1. **Courbe de convergence** : accuracy en Y, nombre d'annotations en X. Montrer dev (rolling window). Annoter les moments de rewrite (v0 → v1 → v2...).
-2. **Tableau de comparaison** : B0, B2, HILPO vN, avec accuracy + F1 macro, p-value McNemar.
+2. **Tableau de comparaison** : B0, B2, MILPO vN, avec accuracy + F1 macro, p-value McNemar.
 3. **Ablation batch size** : Barplot ou courbe montrant l'effet de B=1, 10, 30, 50 sur la performance finale.
 4. **Matrice de confusion** : Pour visual_format, avant (v0) vs après (vN).
 
@@ -215,12 +215,12 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 | ID | Variante | Variable testée |
 |----|----------|-----------------|
 | A0 | Prompt v0 statique | Baseline sans optimisation |
-| A1 | HILPO batch=1 | Taille du batch |
-| A2 | HILPO batch=10 | Taille du batch |
-| A3 | HILPO batch=30 (défaut) | Configuration principale |
-| A4 | HILPO batch=50 | Taille du batch |
-| A5 | HILPO sans rollback | Effet du mécanisme de rollback |
-| A6 | HILPO rewrite humain | LLM rewriter vs humain expert |
+| A1 | MILPO batch=1 | Taille du batch |
+| A2 | MILPO batch=10 | Taille du batch |
+| A3 | MILPO batch=30 (défaut) | Configuration principale |
+| A4 | MILPO batch=50 | Taille du batch |
+| A5 | MILPO sans rollback | Effet du mécanisme de rollback |
+| A6 | MILPO rewrite humain | LLM rewriter vs humain expert |
 
 ## Baselines
 
@@ -246,12 +246,12 @@ Ce format permet au rewriter d'agir comme un ingénieur en debug : il voit le co
 - [ ] Ground truth ≥ 1563 dev + 437 test
 - [ ] Kappa intra-annotateur ≥ 0.7
 - [ ] 1 run principal + ablations batch size
-- [ ] McNemar sur B0 vs HILPO vN
+- [ ] McNemar sur B0 vs MILPO vN
 
 ### Résultats
 - [x] B0 (zero-shot v0) — 86.7% / 65.4% / 94.5% (run id=7, 437/437 posts, $2.68, prompts v0 lockés via migration 006)
 - [ ] B2 (few-shot)
-- [ ] HILPO final (BN)
+- [ ] MILPO final (BN)
 - [ ] Courbe de convergence
 - [ ] ≥ 1 ablation (batch size ou rollback)
 - [ ] Matrice de confusion avant/après

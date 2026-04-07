@@ -20,7 +20,7 @@ function App() {
       <header className="bg-white border-b border-neutral-200 px-6 py-3 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-sm font-semibold tracking-tight text-neutral-900">HILPO</h1>
+            <h1 className="text-sm font-semibold tracking-tight text-neutral-900">MILPO</h1>
 
             <div className="flex p-0.5 bg-neutral-100 rounded-md">
               <button
