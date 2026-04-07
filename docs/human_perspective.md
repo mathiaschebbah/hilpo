@@ -19,7 +19,7 @@ Cette section est dédiée aux observations que je fais durant le travail de pr�
 - Au 7 avril, le projet est à un stade avancé, et j'entends parler d'un phénomène qui grandit, le "claude's psychosis" ([voir l'exemple sur X/Twitter](https://x.com/banteg/status/2041446845721854401)). Ce phénomène est assez répandu et documenté sur X. En résumé : Claude encense les idées de l'utilisateur, en créant un univers autour d'une idée assez simple.
 - Je suspecte ce projet d'être victime de ce phénomène. En effet, ce projet est né d'un besoin réel chez Views, et la problématique a été actée en décembre 2025. Pour autant, l'agent a : inventé un nom (initialement Human In The Loop Prompt Optimization), affirmé que cette méthodologie était **complétement novatrice** (on a vu plus tard qu'un papier de 2023 introduit le concept de SGD pour les prompts, j'ai décidé de garder cette parentalité et de dire que je l'étend aux données multimodales, même si DSPy répondent déjà à ces questions d'une manière concurrente, (probablement pas totalement adaptée au contexte de Views)).
 
-### 3. Le projet, tel que je le vois.
+## 3. Le projet, tel que je le vois.
 
 Actuellement, (au 7 Avril) je considère que le projet permettera : 
 - À Views d'acquérir une pipeline de classification optimisée sur son Dataset, qui servira aux outils d'aide à la décision que je développe au sein du média
