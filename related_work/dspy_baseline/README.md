@@ -13,10 +13,6 @@ classification de posts Instagram pour Views. Après le reframing du 7 avril
 « ingénieur-chercheur » : MILPO ne prétend plus être une méthode novatrice,
 c'est une étude empirique sur taxonomie subjective à longue traîne.
 
-Pour défendre ce positionnement face à un jury, il faut mesurer empiriquement
-ce que ferait l'**état de l'art générique** sur le même problème. DSPy
-MIPROv2 est le candidat naturel : framework SOTA, supporte multi-stage et
-petits datasets, optimise instructions + few-shot examples conjointement.
 
 ## Question expérimentale
 

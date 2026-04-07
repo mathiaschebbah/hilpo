@@ -18,7 +18,7 @@
 - [Phases](docs/phases.md) — phases de dev et avancement
 - [Evaluation](docs/evaluation.md) — protocole, metriques, tiers de priorite, checklist recevabilite
 - [Prompts v0](docs/prompts_v0.md) — référence humaine miroir des 6 prompts v0 seedés par la migration 006
-- [Reproduire](REPRODUCE.md) — guide de reproduction des résultats (jury/reviewers)
+- [Reproduire](REPRODUCE.md) — guide de reproduction des résultats
 - [Related work code](related_work/README.md) — implémentations de baselines (DSPy MIPROv2, etc.) comparées à MILPO
 - [Conventions](docs/conventions.md) — règles de collaboration et standards
 - [Planning](docs/planning.md) — calendrier jour par jour avec creneaux, 5-18 avril 2026

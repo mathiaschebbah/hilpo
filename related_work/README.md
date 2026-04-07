@@ -5,9 +5,6 @@ Ce dossier contient des implémentations de méthodes d'optimisation de prompts
 des posts Instagram du média Views, dans le but de produire des chiffres
 comparables au B0 humain et aux runs de la boucle MILPO Phase 3.
 
-L'objectif est méthodologique : positionner MILPO honnêtement face à l'état de
-l'art générique de l'optimisation de prompts, et ne pas laisser un jury (ou
-un lecteur) se demander « pourquoi ne pas avoir simplement utilisé X ? ».
 
 ## Sous-dossiers
 
