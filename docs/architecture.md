@@ -344,33 +344,33 @@ L'humain annote d'abord tous les posts dev. La simulation rejoue ensuite les ann
 - **Entrée** : $`\mathcal{D}_{\text{dev}} = \{(x_i, h(x_i))\}_{i=1}^{N_{\text{dev}}}`$, hyperparamètres $`B, \delta, \text{patience}, w_{\text{eval}}`$, modèle $`f_\theta`$, prompt initial $`I_0`$, descriptions $`\Delta`$
 - **Sortie** : prompt final $`I_T`$
 
-```text
- 1.  t ← 0,  E_t ← ∅,  fails ← 0,  cursor ← 0
- 2.  tant que cursor < N_dev faire
- 3.      x_i ← D_dev[cursor]
- 4.      features_i ← F( x_i, ( I_t^(desc, m_i), Δ^(m_i) ) )
- 5.      pour chaque k ∈ {cat, vf, str} en parallèle faire
- 6.          ŷ_i^k ← f_θ( features_i, caption_i, ( I_t^(k, m_i), Δ^(m_i) ) )
- 7.      pour chaque k faire
- 8.          si h(x_i)^k ≠ ŷ_i^k alors
- 9.              E_t ← E_t ∪ { (x_i, features_i, h(x_i)^k, ŷ_i^k, k, m_i) }
-10.      cursor ← cursor + 1
-11.      si |E_t| ≥ B alors
-12.          (k*, m*) ← pick_target(E_t)
-13.          I_{t+1}^cand ← R( I_t^(k*, m*), E_t, Δ )
-14.          S_eval ← D_dev[cursor : cursor + w_eval]
-15.          acc_inc  ← m( S_eval, ( I_t^(k*, m*),   Δ ) )
-16.          acc_cand ← m( S_eval, ( I_{t+1}^cand,   Δ ) )
-17.          si acc_cand ≥ acc_inc + δ alors
-18.              I_{t+1}^(k*, m*) ← I_{t+1}^cand
-19.              t ← t + 1,  fails ← 0
-20.          sinon
-21.              fails ← fails + 1
-22.          E_t ← ∅
-23.          cursor ← cursor + w_eval
-24.          si fails ≥ patience alors sortir
-25.  retourner I_t
-```
+| # | |
+|---|---|
+| 1 | $`t \leftarrow 0,\ E_t \leftarrow \emptyset,\ \textit{fails} \leftarrow 0,\ \textit{cursor} \leftarrow 0`$ |
+| 2 | **tant que** $`\textit{cursor} < N_{\text{dev}}`$ **faire** |
+| 3 | &nbsp;&nbsp;&nbsp;&nbsp;$`x_i \leftarrow \mathcal{D}_{\text{dev}}[\textit{cursor}]`$ |
+| 4 | &nbsp;&nbsp;&nbsp;&nbsp;$`\text{features}_i \leftarrow \mathcal{F}\bigl(x_i, (I_t^{(\text{desc}, m_i)}, \Delta^{m_i})\bigr)`$ |
+| 5 | &nbsp;&nbsp;&nbsp;&nbsp;**pour chaque** $`k \in \{\text{cat}, \text{vf}, \text{str}\}`$ **en parallèle faire** |
+| 6 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\hat{y}_i^k \leftarrow f_\theta\bigl(\text{features}_i, \text{caption}_i, (I_t^{(k, m_i)}, \Delta^{m_i})\bigr)`$ |
+| 7 | &nbsp;&nbsp;&nbsp;&nbsp;**pour chaque** $`k`$ **faire** |
+| 8 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**si** $`h(x_i)^k \neq \hat{y}_i^k`$ **alors** |
+| 9 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`E_t \leftarrow E_t \cup \{(x_i, \text{features}_i, h(x_i)^k, \hat{y}_i^k, k, m_i)\}`$ |
+| 10 | &nbsp;&nbsp;&nbsp;&nbsp;$`\textit{cursor} \leftarrow \textit{cursor} + 1`$ |
+| 11 | &nbsp;&nbsp;&nbsp;&nbsp;**si** $`\lvert E_t \rvert \geq B`$ **alors** |
+| 12 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`(k^\star, m^\star) \leftarrow \text{pick\_target}(E_t)`$ |
+| 13 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`I_{t+1}^{\text{cand}} \leftarrow \mathcal{R}\bigl(I_t^{(k^\star, m^\star)}, E_t, \Delta\bigr)`$ |
+| 14 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\mathcal{S}_{\text{eval}} \leftarrow \mathcal{D}_{\text{dev}}[\textit{cursor} : \textit{cursor} + w_{\text{eval}}]`$ |
+| 15 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\text{acc}_{\text{inc}} \leftarrow \mathrm{m}\bigl(\mathcal{S}_{\text{eval}}, (I_t^{(k^\star, m^\star)}, \Delta)\bigr)`$ |
+| 16 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\text{acc}_{\text{cand}} \leftarrow \mathrm{m}\bigl(\mathcal{S}_{\text{eval}}, (I_{t+1}^{\text{cand}}, \Delta)\bigr)`$ |
+| 17 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**si** $`\text{acc}_{\text{cand}} \geq \text{acc}_{\text{inc}} + \delta`$ **alors** |
+| 18 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`I_{t+1}^{(k^\star, m^\star)} \leftarrow I_{t+1}^{\text{cand}}`$ |
+| 19 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`t \leftarrow t + 1,\ \textit{fails} \leftarrow 0`$ |
+| 20 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**sinon** |
+| 21 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\textit{fails} \leftarrow \textit{fails} + 1`$ |
+| 22 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`E_t \leftarrow \emptyset`$ |
+| 23 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\textit{cursor} \leftarrow \textit{cursor} + w_{\text{eval}}`$ |
+| 24 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**si** $`\textit{fails} \geq \text{patience}`$ **alors sortir** |
+| 25 | **retourner** $`I_t`$ |
 
 **Note** : les annotations $`h(x_i)`$ sont pré-existantes (annotation offline), la simulation les rejoue de façon déterministe. L'humain annote en aveugle (sans voir la prédiction du modèle) pour éviter le biais.
 
@@ -383,26 +383,29 @@ Pour situer MILPO dans la filiation directe de ProTeGi (Pryzant et al. 2023), vo
 - **Entrée** : prompt initial $`p_0`$, beam width $`b = 4`$, profondeur $`r = 6`$, métrique $`\mathrm{m}`$
 - **Sortie** : meilleur prompt $`\hat{p}`$
 
-```text
-1.  B_0 ← { p_0 }
-2.  pour i ← 1 à r-1 faire
-3.      C ← ∅
-4.      pour tout p ∈ B_i faire
-5.          C ← C ∪ Expand(p)
-6.      B_{i+1} ← Select_b(C, m)
-7.  p̂ ← argmax_{p ∈ B_r} m(p)
-8.  retourner p̂
+| # | |
+|---|---|
+| 1 | $`\mathcal{B}_0 \leftarrow \{p_0\}`$ |
+| 2 | **pour** $`i \leftarrow 1`$ **à** $`r-1`$ **faire** |
+| 3 | &nbsp;&nbsp;&nbsp;&nbsp;$`\mathcal{C} \leftarrow \emptyset`$ |
+| 4 | &nbsp;&nbsp;&nbsp;&nbsp;**pour tout** $`p \in \mathcal{B}_i`$ **faire** |
+| 5 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`\mathcal{C} \leftarrow \mathcal{C} \cup \text{Expand}(p)`$ |
+| 6 | &nbsp;&nbsp;&nbsp;&nbsp;$`\mathcal{B}_{i+1} \leftarrow \text{Select}_b(\mathcal{C}, \mathrm{m})`$ |
+| 7 | $`\hat{p} \leftarrow \operatorname*{argmax}_{p \in \mathcal{B}_r} \mathrm{m}(p)`$ |
+| 8 | **retourner** $`\hat{p}`$ |
 
-Expand(p) :
-  E1.  D_mini ⊂ D_train,  |D_mini| = 64
-  E2.  évaluer p sur D_mini,  collecter les erreurs e
-  E3.  g_1, ..., g_m ← LLM_∇(p, e)
-  E4.  pour chaque g_i faire
-  E5.      p'_{i1}, ..., p'_{iq} ← LLM_δ(p, g_i, e)
-  E6.      pour chaque p'_{ij} faire
-  E7.          p''_{ij1}, ..., p''_{ijp} ← LLM_mc(p'_{ij})
-  E8.          retourner { p' } ∪ { p'' }
-```
+**Expand(p) :**
+
+| # | |
+|---|---|
+| E1 | $`\mathcal{D}_{\text{mini}} \subset \mathcal{D}_{\text{train}},\ \lvert \mathcal{D}_{\text{mini}} \rvert = 64`$ |
+| E2 | évaluer $`p`$ sur $`\mathcal{D}_{\text{mini}}`$, collecter les erreurs $`e`$ |
+| E3 | $`g_1, \ldots, g_m \leftarrow \mathrm{LLM}_{\nabla}(p, e)`$ |
+| E4 | **pour chaque** $`g_i`$ **faire** |
+| E5 | &nbsp;&nbsp;&nbsp;&nbsp;$`p^{\prime}_{i1}, \ldots, p^{\prime}_{iq} \leftarrow \mathrm{LLM}_{\delta}(p, g_i, e)`$ |
+| E6 | &nbsp;&nbsp;&nbsp;&nbsp;**pour chaque** $`p^{\prime}_{ij}`$ **faire** |
+| E7 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$`p^{\prime\prime}_{ij1}, \ldots, p^{\prime\prime}_{ijp} \leftarrow \mathrm{LLM}_{\text{mc}}(p^{\prime}_{ij})`$ |
+| E8 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**retourner** $`\{p^{\prime}\} \cup \{p^{\prime\prime}\}`$ |
 
 **Différences structurelles MILPO ↔ ProTeGi** :
 
