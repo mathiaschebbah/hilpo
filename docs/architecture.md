@@ -303,17 +303,18 @@ L'humain annote **en aveugle** (sans voir la prédiction du modèle) pour évite
 Soient :
 
 - $\mathcal{D} = \{(x_i, m_i)\}_{i=1}^{N}$ l'ensemble des posts, où $x_i = (\text{image}_i, \text{vidéo}_i, \text{audio}_i, \text{caption}_i)$ est l'entrée multimodale et $m_i \in \{\text{FEED}, \text{REELS}\}$ le type de post.
-- $\mathcal{Y}_k^m$ l'espace des labels pour l'axe $k \in \{\text{cat}, \text{vf}, \text{str}\}$, scopé par le type $m$. Pour `visual_format` : $\mathcal{Y}_{\text{vf}}^{\text{FEED}} = \{\text{post\_}*\}$ (44 labels), $\mathcal{Y}_{\text{vf}}^{\text{REELS}} = \{\text{reel\_}*\}$ (16 labels). Pour `cat` et `str`, l'espace est identique quel que soit $m$.
+- $\mathcal{Y}_k^m$ l'espace des labels pour l'axe $k \in \{\text{cat}, \text{vf}, \text{str}\}$, scopé par le type $m$. Pour `visual_format` : $\mathcal{Y}_{\text{vf}}^{\text{FEED}} = \{\text{post\_*}\}$ (44 labels), $\mathcal{Y}_{\text{vf}}^{\text{REELS}} = \{\text{reel\_*}\}$ (16 labels). Pour `cat` et `str`, l'espace est identique quel que soit $m$.
 - $\Delta^m$ les descriptions taxonomiques scopées par type $m$ (rédigées par l'humain, fixes).
 - $I_t^{(k,m)}$ les instructions actives à l'itération $t$ pour l'agent $k$ scopé au type $m$. **C'est la partie optimisée par MILPO.**
-- $p_t^{(k,m)} = (I_t^{(k,m)}, \Delta^m)$ le prompt complet pour l'agent $(k,m)$ à l'itération $t$. Seul $I_t$ change au fil des itérations.
+- $p_t^{(k,m)} = \bigl(I_t^{(k,m)}, \Delta^m\bigr)$ le prompt complet pour l'agent $(k,m)$ à l'itération $t$. Seul $I_t$ change au fil des itérations.
 - $f_\theta(x, p)$ le modèle de vision-langage (paramètres $\theta$ fixés, prompt $p$ injecté).
 - $h(x_i)^k \in \mathcal{Y}_k^{m_i}$ l'annotation humaine pour le post $x_i$ sur l'axe $k$.
 - $\mathcal{F}(x_i, p_{\text{desc}})$ la sortie du descripteur — features JSON extraites du post $x_i$ avec le prompt $p_{\text{desc}}$.
 - $\mathcal{R}(I_t, E_t, \Delta)$ le **rewriter** — fonction qui prend les instructions courantes, le buffer d'erreurs $E_t$ et les descriptions taxonomiques, et propose de nouvelles instructions candidates $I_{t+1}^{\text{cand}}$.
-- $m(\mathcal{D}_{\text{eval}}, p)$ la métrique d'accuracy sur un ensemble d'évaluation $\mathcal{D}_{\text{eval}}$ avec le prompt $p$.
+- $\mathrm{m}(\mathcal{D}_{\text{eval}}, p)$ la métrique d'accuracy sur un ensemble d'évaluation $\mathcal{D}_{\text{eval}}$ avec le prompt $p$.
 
 Hyperparamètres fixés :
+
 - $B = 30$ : taille du mini-batch d'erreurs avant trigger du rewriter
 - $\delta = 0{,}02$ : seuil de gain minimum pour promotion d'un candidat
 - $\text{patience} = 3$ : nombre de rewrites consécutifs sans promotion avant arrêt
@@ -324,11 +325,11 @@ Hyperparamètres fixés :
 Pour un post $x_i$ de type $m_i$ :
 
 $$
-\text{features}_i = \mathcal{F}(x_i, p_t^{(\text{desc}, m_i)})
+\text{features}_i = \mathcal{F}\bigl(x_i, p_t^{(\text{desc},\, m_i)}\bigr)
 $$
 
 $$
-\hat{y}_i^k = f_\theta\big( \text{features}_i, \text{caption}_i, p_t^{(k, m_i)} \big) \quad \text{pour chaque axe } k \in \{\text{cat}, \text{vf}, \text{str}\}
+\hat{y}_i^k = f_\theta\bigl( \text{features}_i,\, \text{caption}_i,\, p_t^{(k,\, m_i)} \bigr) \quad \forall\, k \in \{\text{cat}, \text{vf}, \text{str}\}
 $$
 
 Le pipeline appelle **1 fois le descripteur** (multimodal, coûteux) puis **3 fois les classifieurs** en parallèle (text-only, peu coûteux) — d'où l'économie de tokens visuels.
@@ -337,42 +338,39 @@ Le pipeline appelle **1 fois le descripteur** (multimodal, coûteux) puis **3 fo
 
 L'humain annote d'abord tous les posts dev. La simulation rejoue ensuite les annotations dans l'ordre de présentation déterministe (`presentation_order`, `seed=42`) et optimise les instructions.
 
-```text
-Algorithme : MILPO_Prequential
-─────────────────────────────────────────────────────────
-Entrée : D_dev = {(x_i, h(x_i))}_{i=1..N_dev}  (posts dev annotés)
-         B, δ, patience, w_eval, f_θ, I_0, Δ
-Sortie : I_T (instructions optimisées)
-
- 1. t ← 0, E_t ← ∅, fails ← 0, cursor ← 0
- 2. Tant que cursor < N_dev :
- 3.    x_i ← D_dev[cursor]
- 4.    features_i ← F(x_i, (I_t^(desc,m_i), Δ^{m_i}))      // descripteur
- 5.    Pour chaque axe k ∈ {cat, vf, str} en parallèle :
- 6.        ŷ_i^k ← f_θ(features_i, caption_i, (I_t^(k,m_i), Δ^{m_i}))
- 7.    Pour chaque axe k :
- 8.        Si h(x_i)^k ≠ ŷ_i^k :
- 9.            E_t ← E_t ∪ {(x_i, features_i, h(x_i)^k, ŷ_i^k, k, m_i)}
-10.    cursor ← cursor + 1
-11.    Si |E_t| ≥ B :
-12.        (k*, m*) ← pick_target(E_t)                       // axe le plus erroné
-13.        I_{t+1}^cand ← R(I_t^(k*,m*), E_t, Δ)              // rewriter (1 LLM call)
-14.        eval_set ← D_dev[cursor : cursor + w_eval]
-15.        acc_inc ← m(eval_set, (I_t^(k*,m*), Δ))            // double évaluation
-16.        acc_cand ← m(eval_set, (I_{t+1}^cand, Δ))
-17.        Si acc_cand ≥ acc_inc + δ :
-18.            I_{t+1}^(k*,m*) ← I_{t+1}^cand                  // PROMOTION
-19.            t ← t + 1
-20.            fails ← 0
-21.        Sinon :
-22.            rejeter I_{t+1}^cand                            // ROLLBACK
-23.            fails ← fails + 1
-24.        E_t ← ∅                                             // reset buffer
-25.        cursor ← cursor + w_eval                            // saut d'évaluation
-26.        Si fails ≥ patience :
-27.            break                                            // arrêt anticipé
-28. Retourner I_t
-```
+$$
+\begin{aligned}
+&\text{\textbf{Algorithme :}}\ \text{MILPO\_Prequential} \\[0.35em]
+&\text{\textbf{Entrée :}}\ \mathcal{D}_{\text{dev}} = \{(x_i, h(x_i))\}_{i=1}^{N_{\text{dev}}},\ B,\ \delta,\ \text{patience},\ w_{\text{eval}},\ f_\theta,\ I_0,\ \Delta \\
+&\text{\textbf{Sortie :}}\ I_T\ \text{(instructions optimisées)} \\[0.5em]
+&1.\quad t \leftarrow 0,\quad E_t \leftarrow \emptyset,\quad \textit{fails} \leftarrow 0,\quad \textit{cursor} \leftarrow 0 \\
+&2.\quad \text{\textbf{tant que}}\ \textit{cursor} < N_{\text{dev}}\ \text{\textbf{:}} \\
+&3.\quad\quad x_i \leftarrow \mathcal{D}_{\text{dev}}[\textit{cursor}] \\
+&4.\quad\quad \text{features}_i \leftarrow \mathcal{F}\bigl(x_i,\ (I_t^{(\text{desc},\, m_i)},\, \Delta^{m_i})\bigr) \\
+&5.\quad\quad \text{\textbf{pour chaque}}\ k \in \{\text{cat}, \text{vf}, \text{str}\}\ \text{\textbf{en parallèle :}} \\
+&6.\quad\quad\quad \hat{y}_i^k \leftarrow f_\theta\bigl(\text{features}_i,\, \text{caption}_i,\ (I_t^{(k,\, m_i)},\, \Delta^{m_i})\bigr) \\
+&7.\quad\quad \text{\textbf{pour chaque}}\ k\ \text{\textbf{:}} \\
+&8.\quad\quad\quad \text{\textbf{si}}\ h(x_i)^k \neq \hat{y}_i^k\ \text{\textbf{:}} \\
+&9.\quad\quad\quad\quad E_t \leftarrow E_t \cup \{(x_i,\, \text{features}_i,\, h(x_i)^k,\, \hat{y}_i^k,\, k,\, m_i)\} \\
+&10.\quad\quad \textit{cursor} \leftarrow \textit{cursor} + 1 \\
+&11.\quad\quad \text{\textbf{si}}\ |E_t| \geq B\ \text{\textbf{:}} \\
+&12.\quad\quad\quad (k^\star,\, m^\star) \leftarrow \text{pick\_target}(E_t) \\
+&13.\quad\quad\quad I_{t+1}^{\text{cand}} \leftarrow \mathcal{R}\bigl(I_t^{(k^\star,\, m^\star)},\, E_t,\, \Delta\bigr) \\
+&14.\quad\quad\quad \mathcal{S}_{\text{eval}} \leftarrow \mathcal{D}_{\text{dev}}[\textit{cursor}\,:\,\textit{cursor} + w_{\text{eval}}] \\
+&15.\quad\quad\quad \text{acc}_{\text{inc}} \leftarrow \mathrm{m}\bigl(\mathcal{S}_{\text{eval}},\, (I_t^{(k^\star,\, m^\star)},\, \Delta)\bigr) \\
+&16.\quad\quad\quad \text{acc}_{\text{cand}} \leftarrow \mathrm{m}\bigl(\mathcal{S}_{\text{eval}},\, (I_{t+1}^{\text{cand}},\, \Delta)\bigr) \\
+&17.\quad\quad\quad \text{\textbf{si}}\ \text{acc}_{\text{cand}} \geq \text{acc}_{\text{inc}} + \delta\ \text{\textbf{:}} \\
+&18.\quad\quad\quad\quad I_{t+1}^{(k^\star,\, m^\star)} \leftarrow I_{t+1}^{\text{cand}} \qquad \text{(promotion)} \\
+&19.\quad\quad\quad\quad t \leftarrow t + 1,\quad \textit{fails} \leftarrow 0 \\
+&20.\quad\quad\quad \text{\textbf{sinon :}} \\
+&21.\quad\quad\quad\quad \text{rejeter}\ I_{t+1}^{\text{cand}} \qquad \text{(rollback)},\quad \textit{fails} \leftarrow \textit{fails} + 1 \\
+&22.\quad\quad\quad E_t \leftarrow \emptyset \\
+&23.\quad\quad\quad \textit{cursor} \leftarrow \textit{cursor} + w_{\text{eval}} \\
+&24.\quad\quad\quad \text{\textbf{si}}\ \textit{fails} \geq \text{patience}\ \text{\textbf{:}}\ \text{\textbf{sortir}} \\
+&25.\quad \text{\textbf{fin tant que}} \\
+&26.\quad \text{\textbf{retourner}}\ I_t
+\end{aligned}
+$$
 
 **Note** : les annotations $h(x_i)$ sont pré-existantes (annotation offline), la simulation les rejoue de façon déterministe. L'humain annote en aveugle (sans voir la prédiction du modèle) pour éviter le biais.
 
@@ -380,38 +378,37 @@ Sortie : I_T (instructions optimisées)
 
 Pour situer MILPO dans la filiation directe de ProTeGi (Pryzant et al. 2023), voici l'algorithme principal de ProTeGi (Algorithm 1 du papier, traduit) :
 
-```text
-Algorithme : ProTeGi (Pryzant et al. 2023)
-─────────────────────────────────────────────────────────
-Entrée : p_0 (prompt initial), b (beam width=4), r (search depth=6), m (métrique)
-Sortie : p̂ (prompt optimisé)
-
-1. B_0 ← {p_0}
-2. Pour i ← 1 à r-1 :
-3.     C ← ∅
-4.     Pour tout p ∈ B_i :
-5.         C ← C ∪ Expand(p)            // m=4 gradients × q éditions × p=2 monte carlo
-6.     B_{i+1} ← Select_b(C, m)         // bandit best-arm-identification (UCB / SR)
-7. p̂ ← argmax_{p ∈ B_r} m(p)
-8. Retourner p̂
-
-Expand(p) :
-1. Sample minibatch D_mini ⊂ D_train      (|D_mini|=64)
-2. Évaluer p sur D_mini, collecter erreurs e
-3. g_1, ..., g_m ← LLM_∇(p, e)            // critic : gradient textuel (LLM 1)
-4. Pour chaque g_i :
-5.     p'_i1, ..., p'_iq ← LLM_δ(p, g_i, e)    // editor (LLM 2)
-6. Pour chaque p'_ij :
-7.     p''_ij1, ..., p''_ijp ← LLM_mc(p'_ij)   // paraphraser monte carlo (LLM 3)
-8. Retourner {p'} ∪ {p''}
-```
+$$
+\begin{aligned}
+&\text{\textbf{Algorithme :}}\ \text{ProTeGi (Pryzant et al., 2023)} \\[0.35em]
+&\text{\textbf{Entrée :}}\ p_0\ \text{(prompt initial)},\ b\ \text{(beam width)} = 4,\ r\ \text{(profondeur)} = 6,\ \mathrm{m}\ \text{(métrique)} \\
+&\text{\textbf{Sortie :}}\ \hat{p}\ \text{(prompt optimisé)} \\[0.5em]
+&1.\quad \mathcal{B}_0 \leftarrow \{p_0\} \\
+&2.\quad \text{\textbf{pour}}\ i \leftarrow 1\ \text{\textbf{à}}\ r-1\ \text{\textbf{:}} \\
+&3.\quad\quad \mathcal{C} \leftarrow \emptyset \\
+&4.\quad\quad \text{\textbf{pour tout}}\ p \in \mathcal{B}_i\ \text{\textbf{:}} \\
+&5.\quad\quad\quad \mathcal{C} \leftarrow \mathcal{C} \cup \text{Expand}(p) \\
+&6.\quad\quad \mathcal{B}_{i+1} \leftarrow \text{Select}_b(\mathcal{C},\, \mathrm{m}) \\
+&7.\quad \hat{p} \leftarrow \operatorname*{argmax}_{p \in \mathcal{B}_r} \mathrm{m}(p) \\
+&8.\quad \text{\textbf{retourner}}\ \hat{p} \\[0.75em]
+&\text{\textbf{Sous-routine}}\ \text{Expand}(p)\text{\textbf{:}} \\
+&E1.\quad \text{Échantillonner un mini-batch}\ \mathcal{D}_{\text{mini}} \subset \mathcal{D}_{\text{train}},\quad |\mathcal{D}_{\text{mini}}| = 64 \\
+&E2.\quad \text{Évaluer}\ p\ \text{sur}\ \mathcal{D}_{\text{mini}},\ \text{collecter les erreurs}\ e \\
+&E3.\quad g_1,\ldots,g_m \leftarrow \mathrm{LLM}_{\nabla}(p,\, e) \\
+&E4.\quad \text{\textbf{pour chaque}}\ g_i\ \text{\textbf{:}} \\
+&E5.\quad\quad p^{\prime}_{i1},\ldots,p^{\prime}_{iq} \leftarrow \mathrm{LLM}_{\delta}(p,\, g_i,\, e) \\
+&E6.\quad\quad \text{\textbf{pour chaque}}\ p^{\prime}_{ij}\ \text{\textbf{:}} \\
+&E7.\quad\quad\quad p^{\prime\prime}_{ij1},\ldots,p^{\prime\prime}_{ijp} \leftarrow \mathrm{LLM}_{\text{mc}}(p^{\prime}_{ij}) \\
+&E8.\quad\quad \text{\textbf{retourner}}\ \{p^{\prime}\} \cup \{p^{\prime\prime}\}
+\end{aligned}
+$$
 
 **Différences structurelles MILPO ↔ ProTeGi** :
 
 | Aspect | ProTeGi | MILPO |
 |---|---|---|
 | Beam search | Oui ($b=4$) | Non (1 incumbent à la fois) |
-| Sélection | Bandit (UCB / Successive Rejects) | Promotion simple si $\Delta \geq \delta$ |
+| Sélection | Bandit (UCB / Successive Rejects) | Promotion si $\text{acc}_{\text{cand}} \geq \text{acc}_{\text{inc}} + \delta$ |
 | LLMs dans la boucle | 3 (critic + editor + paraphraser) | 1 (rewriter unifié $\mathcal{R}$) |
 | Cible de l'optimisation | 1 prompt $p_0$ | 6 prompts ($\text{desc}$ FEED/REELS + cat + vf FEED/REELS + str), sélection par `pick_target` |
 | Search depth | 6 étapes fixes | Jusqu'à `patience` rewrites consécutifs sans promotion |
