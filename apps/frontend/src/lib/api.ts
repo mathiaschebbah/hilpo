@@ -50,6 +50,8 @@ type PostGridResponse = {
   items: Array<{
     ig_media_id: string
     shortcode: string | null
+    caption: string | null
+    timestamp: string | null
     media_type: string
     media_product_type: string
     split: string | null

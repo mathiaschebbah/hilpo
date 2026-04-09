@@ -15,6 +15,8 @@ import { useUrlState } from '@/hooks/useUrlState'
 type GridItem = {
   ig_media_id: string
   shortcode: string | null
+  caption: string | null
+  timestamp: string | null
   media_type: string
   media_product_type: string
   split: string | null
@@ -61,6 +63,7 @@ export function PostGrid({ onOpenPost }: Props) {
   const [bulkLoading, setBulkLoading] = useState(false)
   const [bulkMessage, setBulkMessage] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchCategories().then(setCategories)
@@ -278,6 +281,8 @@ export function PostGrid({ onOpenPost }: Props) {
             <div
               key={item.ig_media_id}
               onClick={() => onOpenPost?.(item.ig_media_id)}
+              onMouseEnter={() => item.caption && setHoveredId(item.ig_media_id)}
+              onMouseLeave={() => setHoveredId(prev => (prev === item.ig_media_id ? null : prev))}
               className={`group relative rounded-lg overflow-hidden bg-neutral-100 ${onOpenPost ? 'cursor-pointer hover:ring-2 hover:ring-amber-300 transition-shadow' : ''}`}
             >
               {/* Image */}
@@ -298,7 +303,7 @@ export function PostGrid({ onOpenPost }: Props) {
 
                 {/* Overlay statut */}
                 {item.is_annotated && (
-                  <div className="absolute top-1.5 right-1.5">
+                  <div className="absolute top-1.5 right-1.5 z-10">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
                       item.annotation_doubtful ? 'bg-amber-500' : 'bg-emerald-500'
                     }`}>
@@ -314,7 +319,7 @@ export function PostGrid({ onOpenPost }: Props) {
                 )}
 
                 {/* Badges type + split */}
-                <div className="absolute bottom-1.5 left-1.5 flex gap-1">
+                <div className="absolute bottom-1.5 left-1.5 flex gap-1 z-10">
                   <span className="text-[9px] font-mono uppercase bg-black/60 text-white px-1.5 py-0.5 rounded-full">
                     {item.media_product_type}
                   </span>
@@ -328,6 +333,22 @@ export function PostGrid({ onOpenPost }: Props) {
                     </span>
                   )}
                 </div>
+
+                {/* Caption overlay au hover */}
+                {item.caption && hoveredId === item.ig_media_id && (
+                  <div className="absolute inset-0 bg-black/80 p-2 flex flex-col justify-end animate-in fade-in duration-100 z-20 pointer-events-none">
+                    {item.timestamp && (
+                      <div className="text-[9px] font-mono text-neutral-300 mb-1 tabular-nums">
+                        {new Date(item.timestamp).toLocaleDateString('fr-FR', {
+                          year: 'numeric', month: 'short', day: 'numeric',
+                        })}
+                      </div>
+                    )}
+                    <p className="text-[10px] leading-snug text-white line-clamp-[14] whitespace-pre-line">
+                      {item.caption}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Infos sous l'image */}

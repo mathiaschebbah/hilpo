@@ -179,7 +179,8 @@ class PostRepository:
         result = await self.db.execute(
             text(f"""
                 SELECT
-                    p.ig_media_id, p.shortcode, p.media_type, p.media_product_type,
+                    p.ig_media_id, p.shortcode, p.caption, p.timestamp,
+                    p.media_type, p.media_product_type,
                     sp.split,
                     c.name AS category, vf.name AS visual_format,
                     h.strategy,

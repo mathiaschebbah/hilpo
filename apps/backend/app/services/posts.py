@@ -98,6 +98,8 @@ class PostService:
             PostGridItem(
                 ig_media_id=str(r["ig_media_id"]),
                 shortcode=r["shortcode"],
+                caption=r.get("caption"),
+                timestamp=r.get("timestamp"),
                 media_type=r["media_type"],
                 media_product_type=r["media_product_type"],
                 split=r.get("split"),

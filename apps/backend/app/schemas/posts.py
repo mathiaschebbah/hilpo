@@ -57,6 +57,8 @@ class LookupOut(BaseModel):
 class PostGridItem(BaseModel):
     ig_media_id: str
     shortcode: str | None = None
+    caption: str | None = None
+    timestamp: datetime | None = None
     media_type: str
     media_product_type: str
     split: str | None = None
