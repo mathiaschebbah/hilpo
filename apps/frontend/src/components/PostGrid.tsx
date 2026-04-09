@@ -1,8 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { fetchPostGrid, fetchCategories, fetchVisualFormats } from '@/lib/api'
+import {
+  fetchPostGrid,
+  fetchCategories,
+  fetchVisualFormats,
+  submitAnnotationsBulk,
+  type BulkAnnotationItem,
+} from '@/lib/api'
+import { useUrlState } from '@/hooks/useUrlState'
 
 type GridItem = {
   ig_media_id: string
@@ -32,14 +39,25 @@ type Props = {
 export function PostGrid({ onOpenPost }: Props) {
   const [items, setItems] = useState<GridItem[]>([])
   const [total, setTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
-  const [statusFilter, setStatusFilter] = useState<string>('')
-  const [categoryFilter, setCategoryFilter] = useState<string>('')
-  const [splitFilter, setSplitFilter] = useState<string>('')
-  const [formatFilter, setFormatFilter] = useState<string>('')
+  // Filtres persistés en URL (préfixe "g_" pour éviter les collisions avec
+  // d'autres vues qui pourraient aussi utiliser useUrlState)
+  const [offset, setOffset] = useUrlState<number>('g_offset', 0, {
+    serialize: (v) => String(v),
+    deserialize: (raw) => {
+      const n = parseInt(raw, 10)
+      return Number.isFinite(n) && n >= 0 ? n : 0
+    },
+  })
+  const [statusFilter, setStatusFilter] = useUrlState<string>('g_status', '')
+  const [categoryFilter, setCategoryFilter] = useUrlState<string>('g_category', '')
+  const [splitFilter, setSplitFilter] = useUrlState<string>('g_split', '')
+  const [formatFilter, setFormatFilter] = useUrlState<string>('g_format', '')
   const [categories, setCategories] = useState<Lookup[]>([])
   const [visualFormats, setVisualFormats] = useState<Lookup[]>([])
   const [loading, setLoading] = useState(true)
+  const [bulkLoading, setBulkLoading] = useState(false)
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null)
+  const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
     fetchCategories().then(setCategories)
@@ -60,16 +78,76 @@ export function PostGrid({ onOpenPost }: Props) {
       setTotal(data.total)
       setLoading(false)
     })
-  }, [offset, statusFilter, categoryFilter, splitFilter, formatFilter])
+  }, [offset, statusFilter, categoryFilter, splitFilter, formatFilter, reloadToken])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
+
+  // Lookups name → id pour construire le payload bulk à partir des items visibles
+  const categoryIdByName = useMemo(
+    () => new Map(categories.map(c => [c.name, c.id])),
+    [categories],
+  )
+  const visualFormatIdByName = useMemo(
+    () => new Map(visualFormats.map(vf => [vf.name, vf.id])),
+    [visualFormats],
+  )
+
+  // Items éligibles au bulk : non-annotés, heuristique complète, IDs résolvables
+  const bulkCandidates: BulkAnnotationItem[] = useMemo(() => {
+    const out: BulkAnnotationItem[] = []
+    for (const it of items) {
+      if (it.is_annotated) continue
+      if (!it.category || !it.visual_format || !it.strategy) continue
+      if (it.strategy !== 'Organic' && it.strategy !== 'Brand Content') continue
+      const cat_id = categoryIdByName.get(it.category)
+      const vf_id = visualFormatIdByName.get(it.visual_format)
+      if (cat_id === undefined || vf_id === undefined) continue
+      out.push({
+        ig_media_id: it.ig_media_id,
+        category_id: cat_id,
+        visual_format_id: vf_id,
+        strategy: it.strategy,
+        doubtful: false,
+      })
+    }
+    return out
+  }, [items, categoryIdByName, visualFormatIdByName])
+
+  const bulkCount = bulkCandidates.length
+  const bulkSkipped = items.filter(it => !it.is_annotated).length - bulkCount
+
+  const handleValidatePage = async () => {
+    if (bulkCount === 0) return
+    const ok = window.confirm(
+      `Valider ${bulkCount} post${bulkCount > 1 ? 's' : ''} avec leurs heuristiques ?` +
+        (bulkSkipped > 0
+          ? `\n\n${bulkSkipped} post${bulkSkipped > 1 ? 's' : ''} ignoré${
+              bulkSkipped > 1 ? 's' : ''
+            } (heuristique incomplète).`
+          : ''),
+    )
+    if (!ok) return
+    setBulkLoading(true)
+    setBulkMessage(null)
+    try {
+      const res = await submitAnnotationsBulk(bulkCandidates)
+      setBulkMessage(`${res.count} post${res.count > 1 ? 's' : ''} annoté${res.count > 1 ? 's' : ''}`)
+      setReloadToken(t => t + 1)
+    } catch (err) {
+      console.error('[bulk] failed', err)
+      setBulkMessage(`Erreur: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setBulkLoading(false)
+      setTimeout(() => setBulkMessage(null), 4000)
+    }
+  }
 
   return (
     <div className="space-y-4">
       {/* Filtres */}
       <div className="flex items-center gap-3">
-        <Select value={statusFilter} onValueChange={v => {
+        <Select value={statusFilter || 'all'} onValueChange={v => {
           const next = v ?? ''
           setStatusFilter(next === 'all' ? '' : next)
           setOffset(0)
@@ -85,7 +163,7 @@ export function PostGrid({ onOpenPost }: Props) {
           </SelectContent>
         </Select>
 
-        <Select value={categoryFilter} onValueChange={v => {
+        <Select value={categoryFilter || 'all'} onValueChange={v => {
           const next = v ?? ''
           setCategoryFilter(next === 'all' ? '' : next)
           setOffset(0)
@@ -101,7 +179,7 @@ export function PostGrid({ onOpenPost }: Props) {
           </SelectContent>
         </Select>
 
-        <Select value={splitFilter} onValueChange={v => {
+        <Select value={splitFilter || 'all'} onValueChange={v => {
           const next = v ?? ''
           setSplitFilter(next === 'all' ? '' : next)
           setOffset(0)
@@ -116,7 +194,7 @@ export function PostGrid({ onOpenPost }: Props) {
           </SelectContent>
         </Select>
 
-        <Select value={formatFilter} onValueChange={v => {
+        <Select value={formatFilter || 'all'} onValueChange={v => {
           const next = v ?? ''
           setFormatFilter(next === 'all' ? '' : next)
           setOffset(0)
@@ -139,8 +217,31 @@ export function PostGrid({ onOpenPost }: Props) {
           <span className="text-xs font-mono text-neutral-400 tabular-nums">
             {total} posts
           </span>
+          <Button
+            size="sm"
+            onClick={handleValidatePage}
+            disabled={bulkCount === 0 || bulkLoading}
+            className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white disabled:bg-neutral-200 disabled:text-neutral-400"
+            title={
+              bulkCount === 0
+                ? 'Aucun post à valider sur cette page'
+                : `Annote ${bulkCount} post${bulkCount > 1 ? 's' : ''} non-annoté${
+                    bulkCount > 1 ? 's' : ''
+                  } avec leurs heuristiques`
+            }
+          >
+            {bulkLoading
+              ? 'Validation…'
+              : `Valider ${bulkCount} post${bulkCount > 1 ? 's' : ''}`}
+          </Button>
         </div>
       </div>
+
+      {bulkMessage && (
+        <div className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
+          {bulkMessage}
+        </div>
+      )}
 
       {/* Grille */}
       {loading ? (

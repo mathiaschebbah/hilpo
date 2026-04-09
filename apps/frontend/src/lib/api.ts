@@ -196,3 +196,33 @@ export async function submitAnnotation(data: {
     throw error
   }
 }
+
+export type BulkAnnotationItem = {
+  ig_media_id: string
+  category_id: number
+  visual_format_id: number
+  strategy: 'Organic' | 'Brand Content'
+  doubtful?: boolean
+}
+
+export type BulkAnnotationResponse = {
+  created: AnnotationResponse[]
+  count: number
+}
+
+export async function submitAnnotationsBulk(
+  items: BulkAnnotationItem[],
+  annotator = 'mathias',
+): Promise<BulkAnnotationResponse> {
+  if (items.length === 0) {
+    return { created: [], count: 0 }
+  }
+  return requestJson<BulkAnnotationResponse>(
+    `/annotations/bulk?annotator=${annotator}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ annotations: items }),
+    },
+  )
+}

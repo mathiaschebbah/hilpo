@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def normalize_media_id(value: str | int) -> str:
@@ -32,3 +32,14 @@ class AnnotationOut(BaseModel):
     created_at: datetime
 
     _normalize_media_id = field_validator("ig_media_id", mode="before")(normalize_media_id)
+
+
+class BulkAnnotationCreate(BaseModel):
+    """Payload pour annoter plusieurs posts en une seule requête (valider une page)."""
+
+    annotations: list[AnnotationCreate] = Field(..., min_length=1, max_length=200)
+
+
+class BulkAnnotationResult(BaseModel):
+    created: list[AnnotationOut]
+    count: int

@@ -1,5 +1,5 @@
-import { useState } from 'react'
 import { useAnnotation } from '@/hooks/useAnnotation'
+import { useUrlState } from '@/hooks/useUrlState'
 import { MediaViewer } from '@/components/MediaViewer'
 import { AnnotationForm } from '@/components/AnnotationForm'
 import { PostGrid } from '@/components/PostGrid'
@@ -9,8 +9,14 @@ import { Badge } from '@/components/ui/badge'
 
 type View = 'annotate' | 'grid' | 'taxonomy'
 
+const VALID_VIEWS: View[] = ['annotate', 'grid', 'taxonomy']
+
 function App() {
-  const [view, setView] = useState<View>('annotate')
+  const [view, setView] = useUrlState<View>('view', 'annotate', {
+    serialize: (v) => v,
+    deserialize: (raw) =>
+      VALID_VIEWS.includes(raw as View) ? (raw as View) : 'annotate',
+  })
   const { current, done, progress, categories, visualFormats, loading, submit, skip, loadPost, updateVisualFormat, mode, switchMode } = useAnnotation()
 
   const pct = progress.total > 0 ? (progress.annotated / progress.total) * 100 : 0
