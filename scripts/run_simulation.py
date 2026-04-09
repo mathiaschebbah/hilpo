@@ -1,4 +1,8 @@
-"""Simulation MILPO prequential — boucle d'optimisation de prompt.
+"""Simulation MILPO prequential — boucle d'optimisation de prompt ProTeGi.
+
+Implémentation fidèle de Pryzant et al. 2023 (EMNLP, arxiv 2305.03495) :
+gradient textuel (LLM_∇) + édition (LLM_δ) + paraphrase monte-carlo (LLM_mc)
++ Successive Rejects (Audibert & Bubeck 2010) pour la sélection.
 
 Usage :
     uv run python scripts/run_simulation.py
@@ -9,7 +13,9 @@ Variables d'environnement (chargées depuis .env) :
     OPENROUTER_API_KEY          — clé API OpenRouter
     HILPO_GCS_SIGNING_SA_EMAIL  — service account pour signer les URLs GCS
     HILPO_DATABASE_DSN          — DSN PostgreSQL
-    HILPO_MODEL_REWRITER        — modèle rewriter (défaut: openai/gpt-5.4)
+    HILPO_MODEL_CRITIC          — modèle LLM_∇ (défaut: openai/gpt-5.4)
+    HILPO_MODEL_EDITOR          — modèle LLM_δ (défaut: openai/gpt-5.4)
+    HILPO_MODEL_PARAPHRASER     — modèle LLM_mc (défaut: openai/gpt-5.4)
 """
 
 from __future__ import annotations
@@ -20,9 +26,11 @@ import logging
 import sys
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from milpo.config import MODEL_REWRITER
+from milpo.bandits import successive_rejects
+from milpo.config import MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER
 from milpo.db import (
     format_descriptions,
     get_active_prompt,
@@ -36,14 +44,22 @@ from milpo.db import (
     load_visual_formats,
     promote_prompt,
     store_api_call,
+    store_beam_candidate,
+    store_gradient,
     store_prediction,
     store_rewrite_log,
+    update_beam_candidate_eval,
+    update_beam_candidate_sr,
 )
 from milpo.eval import accuracy
 from milpo.errors import LLMCallError
 from milpo.gcs import sign_all_posts_media
 from milpo.inference import ApiCallLog, PipelineResult, PostInput, PromptSet, classify_post
-from milpo.rewriter import ErrorCase, RewriteResult, rewrite_prompt
+from milpo.rewriter import (
+    ErrorCase,
+    ProtegiStepResult,
+    protegi_step,
+)
 
 # Les 6 couples (agent, scope) qui pilotent l'optimisation MILPO.
 # Source de vérité du contenu : BDD (migration 006_seed_prompts_v0.sql).
@@ -89,12 +105,33 @@ class MatchRecord:
 
 
 @dataclass
-class DoubleEvalResult:
-    """Résultats détaillés de la double évaluation."""
+class MultiEvalResult:
+    """Résultats détaillés de la multi évaluation ProTeGi.
 
-    incumbent_matches: list[bool] = field(default_factory=list)
-    candidate_matches: list[bool] = field(default_factory=list)
+    matches_by_arm : {arm_id (= row id dans rewrite_beam_candidates ou
+                      sentinelle INCUMBENT_ARM_ID = 0 pour l'incumbent):
+                      list[bool] des matches sur eval_window posts}
+    incumbent_records : à réinjecter dans all_matches
+    incumbent_arm_id  : valeur sentinelle pour identifier l'incumbent
+    """
+
+    matches_by_arm: dict[int, list[bool]] = field(default_factory=dict)
     incumbent_records: list[MatchRecord] = field(default_factory=list)
+    incumbent_arm_id: int = 0
+
+
+@dataclass
+class RewriteOutcome:
+    """Résultat d'une tentative de rewrite ProTeGi."""
+
+    triggered: bool                       # True si rewrite tenté
+    promoted: bool                        # True si promotion validée
+    winner_db_id: int | None              # id du winner promu (ou tenté)
+    incumbent_acc: float | None
+    candidate_acc: float | None           # accuracy du winner
+    eval_window_consumed: int             # cursor advance après éval
+    incumbent_records: list[MatchRecord]  # à réinjecter dans all_matches
+    failed: bool = False                  # True si LLMCallError
 
 
 # ── Helpers BDD ───────────────────────────────────────────────
@@ -442,25 +479,96 @@ def _target_metric_matches(result: PipelineResult, annotation: dict, target_agen
 # ── Double évaluation ─────────────────────────────────────────
 
 
-def double_evaluate(
+# ── Helpers ProTeGi ───────────────────────────────────────────
+
+
+def _build_all_descriptions_for_target(
+    conn,
+    target_agent: str,
+    target_scope: str | None,
+) -> str:
+    """Charge les descriptions taxonomiques pertinentes pour la cible du rewrite.
+
+    Pour le descripteur : toutes les taxonomies (vf scope + cats + strats).
+    Pour un classifieur : uniquement la taxonomie de l'axe ciblé.
+    """
+    effective_scope = target_scope or "FEED"  # fallback pour category/strategy
+    if target_agent == "descriptor":
+        return (
+            "## Formats visuels\n\n"
+            + format_descriptions(load_visual_formats(conn, effective_scope))
+            + "\n\n## Catégories\n\n"
+            + format_descriptions(load_categories(conn))
+            + "\n\n## Stratégies\n\n"
+            + format_descriptions(load_strategies(conn))
+        )
+    if target_agent == "visual_format":
+        return format_descriptions(load_visual_formats(conn, effective_scope))
+    if target_agent == "category":
+        return format_descriptions(load_categories(conn))
+    if target_agent == "strategy":
+        return format_descriptions(load_strategies(conn))
+    raise ValueError(f"target_agent inconnu: {target_agent}")
+
+
+# ── Multi-évaluation pour le mode protegi ─────────────────────
+
+
+def multi_evaluate(
     eval_posts: list[PostInput],
     annotations: dict[int, dict],
     start_cursor: int,
-    prompt_state: PromptState,
+    base_prompt_state: PromptState,
     target_agent: str,
     target_scope: str | None,
-    candidate_instructions: str,
-    candidate_db_id: int,
+    arms: dict[int, tuple[str, int]],
+    incumbent_arm_id: int,
     conn,
     run_id: int,
     labels_by_scope: dict[str, dict[str, list[str]]],
-) -> DoubleEvalResult:
-    """Évalue incumbent vs candidate sur les eval_posts.
+    eval_pool_size: int = 5,
+) -> MultiEvalResult:
+    """Évalue N bras (incumbent + candidats) sur eval_posts en parallèle.
 
-    Retourne les matches utilisés pour la promotion et les matches incumbent
-    à réinjecter dans les métriques finales de la simulation.
+    Pour chaque post : déroule en parallèle une instance de classify_post par
+    bras (chacune avec son propre PromptSet où la cible est remplacée par les
+    instructions du bras). Le pipeline interne (descripteur + 3 classifieurs)
+    est dupliqué par bras — c'est inefficient mais simple, et la cible étant
+    presque toujours un classifieur dans la pratique, le surcoût reste borné.
+
+    Args:
+        arms: {arm_id: (instructions, prompt_db_id)} — inclut l'incumbent sous
+              `incumbent_arm_id`. Chaque arm_id doit être unique et stable sur
+              toute la durée du multi_evaluate (typiquement le row id de
+              rewrite_beam_candidates pour les candidats, et 0 pour l'incumbent).
+
+    Returns:
+        MultiEvalResult avec matches_by_arm[arm_id] = liste des matches du bras
+        sur les eval_posts (uniquement pour les axes pertinents pour la cible),
+        et incumbent_records pour réinjection dans les métriques globales.
     """
-    result = DoubleEvalResult()
+    if incumbent_arm_id not in arms:
+        raise ValueError(
+            f"multi_evaluate: incumbent_arm_id={incumbent_arm_id} absent de arms"
+        )
+
+    matches_by_arm: dict[int, list[bool]] = {arm_id: [] for arm_id in arms}
+    incumbent_records: list[MatchRecord] = []
+
+    # Construire un PromptState par bras (cache hors boucle posts)
+    arm_states: dict[int, PromptState] = {}
+    for arm_id, (instructions, db_id) in arms.items():
+        arm_states[arm_id] = PromptState(
+            instructions={
+                **base_prompt_state.instructions,
+                (target_agent, target_scope): instructions,
+            },
+            db_ids={
+                **base_prompt_state.db_ids,
+                (target_agent, target_scope): db_id,
+            },
+            versions=base_prompt_state.versions.copy(),
+        )
 
     for offset, post in enumerate(eval_posts):
         annotation = annotations.get(post.ig_media_id)
@@ -470,85 +578,503 @@ def double_evaluate(
         scope = post.media_product_type
         labels = labels_by_scope[scope]
 
-        # ── Incumbent ──
-        prompts_inc = build_prompts_from_state(prompt_state, conn, scope)
-        result_inc = classify_post(
-            post, prompts_inc,
-            labels["category"], labels["visual_format"], labels["strategy"],
-        )
-
-        # Stocker predictions incumbent (call_type=evaluation)
-        for axis in ("category", "visual_format", "strategy"):
-            scope_key = scope if axis in ("visual_format", "descriptor") else None
-            pid = prompt_state.db_ids.get((axis, scope_key)) or prompt_state.db_ids.get((axis, None))
-            store_prediction(conn, post.ig_media_id, axis, pid,
-                             getattr(result_inc.prediction, axis),
-                             simulation_run_id=run_id)
-            result.incumbent_records.append(MatchRecord(
-                axis=axis,
-                match=getattr(result_inc.prediction, axis) == annotation[axis],
-                cursor=start_cursor + offset,
-            ))
-        for call in result_inc.api_calls:
-            scope_key = scope if call.agent in ("descriptor", "visual_format") else None
-            pid = prompt_state.db_ids.get((call.agent, scope_key)) or prompt_state.db_ids.get((call.agent, None))
-            store_api_call(conn, "evaluation", call.agent, call.model, pid,
-                           post.ig_media_id, call.input_tokens, call.output_tokens,
-                           None, call.latency_ms, run_id)
-
-        if target_agent == "descriptor":
-            _store_eval_predictions_for_target(
-                conn=conn,
-                post_id=post.ig_media_id,
-                prompt_version_id=prompt_state.db_ids[(target_agent, target_scope)],
-                target_agent=target_agent,
-                prediction=result_inc.prediction,
-                run_id=run_id,
-            )
-
-        # ── Candidate ──
-        # Construire le PromptSet avec les instructions candidate pour la cible
-        candidate_state = PromptState(
-            instructions={**prompt_state.instructions, (target_agent, target_scope): candidate_instructions},
-            db_ids={**prompt_state.db_ids, (target_agent, target_scope): candidate_db_id},
-            versions=prompt_state.versions.copy(),
-        )
-        prompts_cand = build_prompts_from_state(candidate_state, conn, scope)
-
-        # Si la cible est scopée et le scope ne matche pas, skip candidate
+        # Si la cible est scopée et que le scope du post diffère, le candidat
+        # ne change rien : on ne fait qu'une éval avec l'incumbent et on
+        # propage les mêmes matches à tous les bras (logique identique à
+        # double_evaluate).
         if target_scope is not None and scope != target_scope:
-            # Même résultat que incumbent (le candidate ne change rien pour ce scope)
-            metric_matches = _target_metric_matches(result_inc, annotation, target_agent)
-            result.incumbent_matches.extend(metric_matches)
-            result.candidate_matches.extend(metric_matches)
+            inc_state = arm_states[incumbent_arm_id]
+            inc_prompts = build_prompts_from_state(inc_state, conn, scope)
+            inc_result = classify_post(
+                post, inc_prompts,
+                labels["category"], labels["visual_format"], labels["strategy"],
+            )
+            metric_matches = _target_metric_matches(inc_result, annotation, target_agent)
+            for arm_id in arms:
+                matches_by_arm[arm_id].extend(metric_matches)
+
+            for axis in ("category", "visual_format", "strategy"):
+                scope_key = scope if axis in ("visual_format", "descriptor") else None
+                pid = (
+                    inc_state.db_ids.get((axis, scope_key))
+                    or inc_state.db_ids.get((axis, None))
+                )
+                store_prediction(
+                    conn, post.ig_media_id, axis, pid,
+                    getattr(inc_result.prediction, axis),
+                    simulation_run_id=run_id,
+                )
+                incumbent_records.append(MatchRecord(
+                    axis=axis,
+                    match=getattr(inc_result.prediction, axis) == annotation[axis],
+                    cursor=start_cursor + offset,
+                ))
+
+            for call in inc_result.api_calls:
+                scope_key = scope if call.agent in ("descriptor", "visual_format") else None
+                pid = (
+                    inc_state.db_ids.get((call.agent, scope_key))
+                    or inc_state.db_ids.get((call.agent, None))
+                )
+                store_api_call(
+                    conn, "evaluation", call.agent, call.model, pid,
+                    post.ig_media_id, call.input_tokens, call.output_tokens,
+                    None, call.latency_ms, run_id,
+                )
             continue
 
-        result_cand = classify_post(
-            post, prompts_cand,
-            labels["category"], labels["visual_format"], labels["strategy"],
+        # Sinon : exécute tous les bras en parallèle pour ce post
+        # Borné par eval_pool_size pour ne pas saturer le rate limit.
+        results_by_arm: dict[int, PipelineResult] = {}
+        max_workers = min(len(arms), eval_pool_size)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {}
+            for arm_id, state in arm_states.items():
+                prompts = build_prompts_from_state(state, conn, scope)
+                fut = pool.submit(
+                    classify_post, post, prompts,
+                    labels["category"], labels["visual_format"], labels["strategy"],
+                )
+                futures[fut] = arm_id
+
+            for fut in as_completed(futures):
+                arm_id = futures[fut]
+                results_by_arm[arm_id] = fut.result()
+
+        # Calculer les matches et persister
+        for arm_id, result in results_by_arm.items():
+            metric_matches = _target_metric_matches(result, annotation, target_agent)
+            matches_by_arm[arm_id].extend(metric_matches)
+
+            state = arm_states[arm_id]
+            for call in result.api_calls:
+                scope_key = scope if call.agent in ("descriptor", "visual_format") else None
+                pid = (
+                    state.db_ids.get((call.agent, scope_key))
+                    or state.db_ids.get((call.agent, None))
+                )
+                store_api_call(
+                    conn, "evaluation", call.agent, call.model, pid,
+                    post.ig_media_id, call.input_tokens, call.output_tokens,
+                    None, call.latency_ms, run_id,
+                )
+
+            if arm_id == incumbent_arm_id:
+                # Persister incumbent comme dans double_evaluate (les 3 axes
+                # sont notés pour réinjection dans les métriques globales)
+                for axis in ("category", "visual_format", "strategy"):
+                    scope_key = scope if axis in ("visual_format", "descriptor") else None
+                    pid = (
+                        state.db_ids.get((axis, scope_key))
+                        or state.db_ids.get((axis, None))
+                    )
+                    store_prediction(
+                        conn, post.ig_media_id, axis, pid,
+                        getattr(result.prediction, axis),
+                        simulation_run_id=run_id,
+                    )
+                    incumbent_records.append(MatchRecord(
+                        axis=axis,
+                        match=getattr(result.prediction, axis) == annotation[axis],
+                        cursor=start_cursor + offset,
+                    ))
+            else:
+                # Pour les candidats : audit trail sur l'axe ciblé uniquement
+                _store_eval_predictions_for_target(
+                    conn=conn,
+                    post_id=post.ig_media_id,
+                    prompt_version_id=state.db_ids[(target_agent, target_scope)],
+                    target_agent=target_agent,
+                    prediction=result.prediction,
+                    run_id=run_id,
+                )
+
+    return MultiEvalResult(
+        matches_by_arm=matches_by_arm,
+        incumbent_records=incumbent_records,
+        incumbent_arm_id=incumbent_arm_id,
+    )
+
+
+# ── Helpers de persistance ProTeGi ────────────────────────────
+
+
+@dataclass
+class ProtegiArm:
+    """Un bras du bandit ProTeGi (edit ou paraphrase) prêt à être évalué."""
+
+    beam_row_id: int          # row id dans rewrite_beam_candidates
+    prompt_db_id: int         # row id dans prompt_versions
+    version: int
+    kind: str                 # 'edit' | 'paraphrase'
+    instructions: str
+
+
+def _persist_protegi_artifacts(
+    conn,
+    *,
+    run_id: int,
+    iteration: int,
+    target_agent: str,
+    target_scope: str | None,
+    incumbent_db_id: int,
+    incumbent_version: int,
+    step_result: ProtegiStepResult,
+    p: int,
+) -> tuple[int, list[ProtegiArm]]:
+    """Persiste le gradient + insère les prompt_versions des candidats + crée
+    les rows beam_candidates.
+
+    Retourne (gradient_id, list[ProtegiArm]) pour les bras qui iront dans le
+    bandit (edits si p<=1, paraphrases si p>=2). Les edits sont toujours
+    matérialisés en BDD pour traçabilité même quand p>=2 — ils servent alors
+    de parent_prompt_id pour leurs paraphrases.
+    """
+    # 1. Persister le gradient
+    gradient_id = store_gradient(
+        conn,
+        simulation_run_id=run_id,
+        iteration=iteration,
+        target_agent=target_agent,
+        target_scope=target_scope,
+        prompt_id=incumbent_db_id,
+        gradient_text=step_result.gradient.gradient_text,
+        n_critiques=step_result.gradient.n_critiques,
+        model=step_result.gradient.model,
+        input_tokens=step_result.gradient.input_tokens,
+        output_tokens=step_result.gradient.output_tokens,
+        latency_ms=step_result.gradient.latency_ms,
+    )
+
+    # 2. Insérer les prompt_versions pour chaque edit candidate
+    next_version = incumbent_version + 1
+    edit_arms: list[ProtegiArm] = []
+
+    for i, ec in enumerate(step_result.edit.candidates):
+        edit_version = next_version + i
+        edit_id = insert_prompt_version(
+            conn, target_agent, target_scope, edit_version,
+            ec.new_instructions,
+            status="draft",
+            parent_id=incumbent_db_id,
+            simulation_run_id=run_id,
         )
-
-        # Stocker predictions candidate (call_type=evaluation)
-        for call in result_cand.api_calls:
-            scope_key = scope if call.agent in ("descriptor", "visual_format") else None
-            pid = candidate_state.db_ids.get((call.agent, scope_key)) or candidate_state.db_ids.get((call.agent, None))
-            store_api_call(conn, "evaluation", call.agent, call.model, pid,
-                           post.ig_media_id, call.input_tokens, call.output_tokens,
-                           None, call.latency_ms, run_id)
-
-        _store_eval_predictions_for_target(
-            conn=conn,
-            post_id=post.ig_media_id,
-            prompt_version_id=candidate_db_id,
+        beam_row = store_beam_candidate(
+            conn,
+            simulation_run_id=run_id,
+            iteration=iteration,
             target_agent=target_agent,
-            prediction=result_cand.prediction,
-            run_id=run_id,
+            target_scope=target_scope,
+            parent_prompt_id=incumbent_db_id,
+            candidate_prompt_id=edit_id,
+            gradient_id=gradient_id,
+            generation_kind="edit",
+        )
+        edit_arms.append(ProtegiArm(
+            beam_row_id=beam_row,
+            prompt_db_id=edit_id,
+            version=edit_version,
+            kind="edit",
+            instructions=ec.new_instructions,
+        ))
+
+    # 3. Si p >= 2, paraphraser et insérer
+    if p >= 2 and step_result.paraphrases:
+        para_arms: list[ProtegiArm] = []
+        para_offset = next_version + len(edit_arms)
+        idx = 0
+        for i, pp_result in enumerate(step_result.paraphrases):
+            edit = edit_arms[i]
+            for paraphrase_text in pp_result.paraphrases:
+                pp_version = para_offset + idx
+                pp_id = insert_prompt_version(
+                    conn, target_agent, target_scope, pp_version,
+                    paraphrase_text,
+                    status="draft",
+                    parent_id=edit.prompt_db_id,
+                    simulation_run_id=run_id,
+                )
+                pp_beam_row = store_beam_candidate(
+                    conn,
+                    simulation_run_id=run_id,
+                    iteration=iteration,
+                    target_agent=target_agent,
+                    target_scope=target_scope,
+                    parent_prompt_id=edit.prompt_db_id,
+                    candidate_prompt_id=pp_id,
+                    gradient_id=gradient_id,
+                    generation_kind="paraphrase",
+                )
+                para_arms.append(ProtegiArm(
+                    beam_row_id=pp_beam_row,
+                    prompt_db_id=pp_id,
+                    version=pp_version,
+                    kind="paraphrase",
+                    instructions=paraphrase_text,
+                ))
+                idx += 1
+        return gradient_id, para_arms
+
+    return gradient_id, edit_arms
+
+
+# ── Tentative de rewrite (boucle ProTeGi) ─────────────────────
+
+
+# Sentinelle pour identifier l'incumbent dans multi_evaluate.
+INCUMBENT_ARM_ID = 0
+
+
+def run_protegi_rewrite(
+    args,
+    conn,
+    run_id: int,
+    rewrite_count: int,
+    target_agent: str,
+    target_scope: str | None,
+    target_errors: list[ErrorCase],
+    prompt_state: PromptState,
+    eval_posts: list[PostInput],
+    eval_start_cursor: int,
+    annotations: dict[int, dict],
+    labels_by_scope: dict[str, dict[str, list[str]]],
+) -> RewriteOutcome:
+    """Boucle ProTeGi (Pryzant et al. 2023, EMNLP) : gradient + edit + paraphrase + Successive Rejects.
+
+    1. compute_textual_gradient (LLM_∇) → gradient persisté
+    2. apply_gradient_edit (LLM_δ) → c candidats édités
+    3. Si p>=2 : paraphrase_candidate (LLM_mc) → c×p paraphrases
+    4. multi_evaluate sur eval_posts en parallèle
+    5. successive_rejects (Audibert & Bubeck 2010) → winner
+    6. promote/rollback selon delta vs incumbent
+    """
+    current_key = (target_agent, target_scope)
+    incumbent_db_id = prompt_state.db_ids[current_key]
+    incumbent_version = prompt_state.versions[current_key]
+    incumbent_instructions = prompt_state.instructions[current_key]
+
+    all_descs = _build_all_descriptions_for_target(conn, target_agent, target_scope)
+
+    log.info(
+        "[REWRITE #%d] (protegi) gradient → edit → %s eval × %d posts",
+        rewrite_count,
+        "paraphrase →" if args.protegi_p >= 2 else "(skip paraphrase) →",
+        len(eval_posts),
+    )
+
+    try:
+        step_result = protegi_step(
+            target_agent=target_agent,
+            target_scope=target_scope,
+            current_instructions=incumbent_instructions,
+            errors=target_errors,
+            all_descriptions=all_descs,
+            m=args.protegi_m,
+            c=args.protegi_c,
+            p=args.protegi_p,
+        )
+    except LLMCallError as exc:
+        log.warning("[REWRITE #%d] (protegi) Échec %s/%s : %s",
+                    rewrite_count, target_agent, target_scope or "all", exc)
+        return RewriteOutcome(
+            triggered=True, promoted=False, winner_db_id=None,
+            incumbent_acc=None, candidate_acc=None,
+            eval_window_consumed=0, incumbent_records=[],
+            failed=True,
         )
 
-        result.incumbent_matches.extend(_target_metric_matches(result_inc, annotation, target_agent))
-        result.candidate_matches.extend(_target_metric_matches(result_cand, annotation, target_agent))
+    # Logger les coûts des appels LLM ProTeGi
+    store_api_call(
+        conn, "rewrite", target_agent, step_result.gradient.model,
+        incumbent_db_id, None,
+        step_result.gradient.input_tokens, step_result.gradient.output_tokens,
+        None, step_result.gradient.latency_ms, run_id,
+    )
+    store_api_call(
+        conn, "rewrite", target_agent, step_result.edit.model,
+        incumbent_db_id, None,
+        step_result.edit.input_tokens, step_result.edit.output_tokens,
+        None, step_result.edit.latency_ms, run_id,
+    )
+    for pp in step_result.paraphrases:
+        store_api_call(
+            conn, "rewrite", target_agent, pp.model,
+            incumbent_db_id, None,
+            pp.input_tokens, pp.output_tokens,
+            None, pp.latency_ms, run_id,
+        )
 
-    return result
+    # Persister gradient + insérer prompt_versions + créer beam_candidates
+    gradient_id, arms_to_eval = _persist_protegi_artifacts(
+        conn,
+        run_id=run_id,
+        iteration=rewrite_count,
+        target_agent=target_agent,
+        target_scope=target_scope,
+        incumbent_db_id=incumbent_db_id,
+        incumbent_version=incumbent_version,
+        step_result=step_result,
+        p=args.protegi_p,
+    )
+
+    if not arms_to_eval:
+        log.warning("[REWRITE #%d] (protegi) aucun candidat à évaluer.", rewrite_count)
+        return RewriteOutcome(
+            triggered=True, promoted=False, winner_db_id=None,
+            incumbent_acc=None, candidate_acc=None,
+            eval_window_consumed=0, incumbent_records=[],
+            failed=True,
+        )
+
+    # Construire les bras pour multi_evaluate
+    # arm_id = beam_row_id du candidat (jamais 0). L'incumbent prend INCUMBENT_ARM_ID = 0.
+    arms: dict[int, tuple[str, int]] = {
+        INCUMBENT_ARM_ID: (incumbent_instructions, incumbent_db_id),
+    }
+    for arm in arms_to_eval:
+        arms[arm.beam_row_id] = (arm.instructions, arm.prompt_db_id)
+
+    log.info("[REWRITE #%d] (protegi) multi_evaluate %d bras × %d posts",
+             rewrite_count, len(arms), len(eval_posts))
+
+    try:
+        multi_result = multi_evaluate(
+            eval_posts=eval_posts,
+            annotations=annotations,
+            start_cursor=eval_start_cursor,
+            base_prompt_state=prompt_state,
+            target_agent=target_agent,
+            target_scope=target_scope,
+            arms=arms,
+            incumbent_arm_id=INCUMBENT_ARM_ID,
+            conn=conn,
+            run_id=run_id,
+            labels_by_scope=labels_by_scope,
+        )
+    except LLMCallError as exc:
+        log.warning("[REWRITE #%d] (protegi) Échec multi_evaluate : %s", rewrite_count, exc)
+        return RewriteOutcome(
+            triggered=True, promoted=False, winner_db_id=None,
+            incumbent_acc=None, candidate_acc=None,
+            eval_window_consumed=0, incumbent_records=[],
+            failed=True,
+        )
+
+    # Mettre à jour eval_accuracy pour chaque candidat (pas l'incumbent)
+    incumbent_matches = multi_result.matches_by_arm[INCUMBENT_ARM_ID]
+    inc_acc = accuracy(incumbent_matches)
+
+    candidate_arms = {
+        arm_id: matches
+        for arm_id, matches in multi_result.matches_by_arm.items()
+        if arm_id != INCUMBENT_ARM_ID
+    }
+    for beam_row_id, matches in candidate_arms.items():
+        update_beam_candidate_eval(
+            conn,
+            candidate_row_id=beam_row_id,
+            eval_accuracy=accuracy(matches),
+            eval_sample_size=len(matches),
+        )
+
+    # Successive Rejects sur les candidats (l'incumbent n'est pas un bras du SR :
+    # il sert de référence pour la décision promote/rollback ensuite).
+    sr_input = candidate_arms
+    if not sr_input:
+        log.warning("[REWRITE #%d] (protegi) aucun bras candidat évaluable.", rewrite_count)
+        return RewriteOutcome(
+            triggered=True, promoted=False, winner_db_id=None,
+            incumbent_acc=inc_acc, candidate_acc=None,
+            eval_window_consumed=len(eval_posts),
+            incumbent_records=multi_result.incumbent_records,
+            failed=False,
+        )
+
+    sr_result = successive_rejects(sr_input, k=1)
+    winner_beam_row_id = sr_result.winner_arm_id
+    winner_acc = sr_result.winner_score
+    winner_db_id = arms[winner_beam_row_id][1]
+
+    # Persister les résultats SR par bras
+    for phase in sr_result.phases:
+        update_beam_candidate_sr(
+            conn,
+            candidate_row_id=phase.eliminated_arm_id,
+            sr_phase=phase.phase,
+            sr_eliminated=True,
+            is_winner=False,
+        )
+    update_beam_candidate_sr(
+        conn,
+        candidate_row_id=winner_beam_row_id,
+        sr_phase=None,
+        sr_eliminated=False,
+        is_winner=True,
+    )
+
+    delta_actual = winner_acc - inc_acc
+    promoted = winner_acc >= inc_acc + args.delta
+    if args.no_rollback:
+        promoted = winner_acc > inc_acc
+
+    # Log rewrite (winner = candidat post-SR)
+    store_rewrite_log(
+        conn,
+        prompt_before_id=incumbent_db_id,
+        prompt_after_id=winner_db_id,
+        error_batch=[{
+            "axis": e.axis,
+            "predicted": e.predicted,
+            "expected": e.expected,
+            "ig_media_id": e.ig_media_id,
+            "post_scope": e.post_scope,
+        } for e in target_errors],
+        rewriter_reasoning=(
+            f"[protegi] gradient_id={gradient_id} "
+            f"({step_result.gradient.n_critiques} critiques) | "
+            f"{len(arms_to_eval)} candidats évalués, SR winner = beam_row_id={winner_beam_row_id}"
+        ),
+        accepted=promoted,
+        simulation_run_id=run_id,
+        target_agent=target_agent,
+        target_scope=target_scope,
+        incumbent_accuracy=inc_acc,
+        candidate_accuracy=winner_acc,
+        eval_sample_size=len(eval_posts),
+        iteration=rewrite_count,
+    )
+
+    if promoted:
+        promote_prompt(conn, target_agent, target_scope, winner_db_id)
+        # Récupère la version depuis arms_to_eval (évite roundtrip BDD)
+        new_version = next(
+            (a.version for a in arms_to_eval if a.beam_row_id == winner_beam_row_id),
+            incumbent_version + 1,
+        )
+        prompt_state.instructions[current_key] = arms[winner_beam_row_id][0]
+        prompt_state.db_ids[current_key] = winner_db_id
+        prompt_state.versions[current_key] = new_version
+        log.info("[REWRITE #%d] (protegi) Incumbent %.1f%% vs Winner %.1f%% (Δ=+%.1f%%)",
+                 rewrite_count, inc_acc * 100, winner_acc * 100, delta_actual * 100)
+        log.info("[REWRITE #%d] >>> PROMOTED (v%d → v%d %s/%s) <<<",
+                 rewrite_count, incumbent_version, new_version,
+                 target_agent, target_scope or "all")
+    else:
+        log.info("[REWRITE #%d] (protegi) Incumbent %.1f%% vs Winner %.1f%% (Δ=%.1f%%)",
+                 rewrite_count, inc_acc * 100, winner_acc * 100, delta_actual * 100)
+        log.info("[REWRITE #%d] <<< ROLLBACK <<<", rewrite_count)
+
+    return RewriteOutcome(
+        triggered=True,
+        promoted=promoted,
+        winner_db_id=winner_db_id,
+        incumbent_acc=inc_acc,
+        candidate_acc=winner_acc,
+        eval_window_consumed=len(eval_posts),
+        incumbent_records=multi_result.incumbent_records,
+        failed=False,
+    )
 
 
 # ── Display ───────────────────────────────────────────────────
@@ -600,7 +1126,9 @@ def display_rolling(cursor, all_matches, window=50):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Simulation MILPO prequential")
+    parser = argparse.ArgumentParser(
+        description="Simulation MILPO prequential — boucle ProTeGi (Pryzant et al. 2023)",
+    )
     parser.add_argument("-B", "--batch-size", type=int, default=30)
     parser.add_argument("--delta", type=float, default=0.02)
     parser.add_argument("--patience", type=int, default=3)
@@ -608,8 +1136,20 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Pas de rewrite (B0-on-dev)")
     parser.add_argument("--no-rollback", action="store_true", help="Ablation A5")
     parser.add_argument("--limit", type=int, default=None, help="Nombre de posts max")
-    parser.add_argument("--rewriter-model", type=str, default=MODEL_REWRITER)
+    # ── Hyperparams ProTeGi ────────────────────────────────────
+    parser.add_argument("-m", "--protegi-m", type=int, default=3,
+                        help="critiques par appel critic LLM_∇ (paper m=4, défaut 3)")
+    parser.add_argument("-c", "--protegi-c", type=int, default=4,
+                        help="candidats édités par appel editor LLM_δ (paper c=8, défaut 4)")
+    parser.add_argument("-p", "--protegi-p", type=int, default=1,
+                        help="paraphrases par candidat LLM_mc (paper p=2, défaut 1 = skip étape MC)")
+    parser.add_argument("--protegi-paper-defaults", action="store_true",
+                        help="Convenience : applique m=4 c=8 p=2 (hyperparams paper Pryzant et al.)")
     args = parser.parse_args()
+
+    if args.protegi_paper_defaults:
+        args.protegi_m, args.protegi_c, args.protegi_p = 4, 8, 2
+        log.info("[PROTEGI] paper defaults appliqués : m=4 c=8 p=2")
 
     conn = get_conn()
     run_id: int | None = None
@@ -628,9 +1168,12 @@ def main():
     try:
         # ── Header ──
         log.info("=" * 60)
-        log.info("  MILPO — Simulation prequential")
+        log.info("  MILPO — Simulation prequential ProTeGi")
         log.info("  B=%d  delta=%.0f%%  patience=%d  eval_window=%d",
                  args.batch_size, args.delta * 100, args.patience, args.eval_window)
+        log.info("  PROTEGI: m=%d c=%d p=%d (critic=%s editor=%s paraphraser=%s)",
+                 args.protegi_m, args.protegi_c, args.protegi_p,
+                 MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER)
         if args.dry_run:
             log.info("  MODE: dry-run (pas de rewrite)")
         if args.no_rollback:
@@ -657,8 +1200,9 @@ def main():
             sys.exit(1)
 
         # ── 3. Simulation run ──
-        run_id = create_run(conn, {
-            "name": f"MILPO_B{args.batch_size}" + ("_dryrun" if args.dry_run else ""),
+        run_config: dict = {
+            "name": f"MILPO_protegi_B{args.batch_size}"
+                    + ("_dryrun" if args.dry_run else ""),
             "split": "dev",
             "batch_size": args.batch_size,
             "delta": args.delta,
@@ -666,8 +1210,16 @@ def main():
             "eval_window": args.eval_window,
             "dry_run": args.dry_run,
             "no_rollback": args.no_rollback,
-            "rewriter_model": args.rewriter_model,
-        })
+            "protegi": {
+                "m": args.protegi_m,
+                "c": args.protegi_c,
+                "p": args.protegi_p,
+                "critic_model": MODEL_CRITIC,
+                "editor_model": MODEL_EDITOR,
+                "paraphraser_model": MODEL_PARAPHRASER,
+            },
+        }
+        run_id = create_run(conn, run_config)
         log.info("simulation_run id=%d", run_id)
 
         # ── 4. Signer les URLs GCS ──
@@ -778,148 +1330,60 @@ def main():
                     error_buffer.clear()
                     continue
 
+                eval_end = min(cursor + args.eval_window, total)
+                eval_posts = post_inputs[cursor:eval_end]
+
+                if len(eval_posts) < 5:
+                    skipped_rewrite_count += 1
+                    print()
+                    log.warning(
+                        "[REWRITE] Pas assez de posts pour évaluer (%d). Skip.",
+                        len(eval_posts),
+                    )
+                    error_buffer.clear()
+                    continue
+
                 rewrite_count += 1
                 print()  # newline après la progress bar
-                log.info("[REWRITE #%d] Buffer plein (%d erreurs). Cible: %s/%s (%d erreurs)",
-                         rewrite_count, len(error_buffer), target_agent, target_scope or "all", len(target_errors))
+                log.info(
+                    "[REWRITE #%d] Buffer plein (%d erreurs). Cible: %s/%s (%d erreurs)",
+                    rewrite_count, len(error_buffer),
+                    target_agent, target_scope or "all", len(target_errors),
+                )
 
-                try:
-                    # Descriptions pour le scope de la cible
-                    effective_scope = target_scope or "FEED"  # fallback pour category/strategy
-                    if target_agent == "descriptor":
-                        all_descs = (
-                            "## Formats visuels\n\n"
-                            + format_descriptions(load_visual_formats(conn, effective_scope))
-                            + "\n\n## Catégories\n\n"
-                            + format_descriptions(load_categories(conn))
-                            + "\n\n## Stratégies\n\n"
-                            + format_descriptions(load_strategies(conn))
-                        )
-                    else:
-                        all_descs = format_descriptions(
-                            load_visual_formats(conn, effective_scope) if target_agent == "visual_format"
-                            else load_categories(conn) if target_agent == "category"
-                            else load_strategies(conn)
-                        )
+                outcome = run_protegi_rewrite(
+                    args, conn, run_id, rewrite_count,
+                    target_agent, target_scope, target_errors,
+                    prompt_state, eval_posts, cursor,
+                    annotations, labels_by_scope,
+                )
 
-                    log.info("[REWRITE #%d] Appel rewriter (%s)...", rewrite_count, args.rewriter_model)
-                    current_key = (target_agent, target_scope)
-                    rewrite_result = rewrite_prompt(
-                        target_agent=target_agent,
-                        target_scope=target_scope,
-                        current_instructions=prompt_state.instructions[current_key],
-                        errors=target_errors,
-                        all_descriptions=all_descs,
-                        model=args.rewriter_model,
-                    )
-
-                    store_api_call(
-                        conn, "rewrite", target_agent, rewrite_result.model, prompt_state.db_ids[current_key],
-                        None, rewrite_result.input_tokens, rewrite_result.output_tokens, None,
-                        rewrite_result.latency_ms, run_id,
-                    )
-                    total_api_calls += 1
-
-                    log.info("[REWRITE #%d] Candidate généré (%.1fs, %dK tokens). Évaluation sur %d posts...",
-                             rewrite_count, rewrite_result.latency_ms / 1000,
-                             (rewrite_result.input_tokens + rewrite_result.output_tokens) // 1000,
-                             args.eval_window)
-
-                    new_version = prompt_state.versions[current_key] + 1
-                    candidate_id = insert_prompt_version(
-                        conn, target_agent, target_scope, new_version,
-                        rewrite_result.new_instructions,
-                        status="draft",
-                        parent_id=prompt_state.db_ids[current_key],
-                        simulation_run_id=run_id,
-                    )
-
-                    eval_end = min(cursor + args.eval_window, total)
-                    eval_posts = post_inputs[cursor:eval_end]
-
-                    if len(eval_posts) < 5:
-                        skipped_rewrite_count += 1
-                        log.warning("[REWRITE #%d] Pas assez de posts pour évaluer (%d). Skip.", rewrite_count, len(eval_posts))
-                        error_buffer.clear()
-                        continue
-
-                    double_eval_result = double_evaluate(
-                        eval_posts, annotations, cursor, prompt_state,
-                        target_agent, target_scope,
-                        rewrite_result.new_instructions, candidate_id,
-                        conn, run_id, labels_by_scope,
-                    )
-
-                    inc_acc = accuracy(double_eval_result.incumbent_matches)
-                    cand_acc = accuracy(double_eval_result.candidate_matches)
-                    delta_actual = cand_acc - inc_acc
-
-                    # Compter les api calls de l'évaluation
-                    eval_api_count = len(eval_posts) * 4 * 2  # 4 agents × 2 runs (rough)
-                    total_api_calls += eval_api_count
-
-                    promoted = cand_acc >= inc_acc + args.delta
-                    if args.no_rollback:
-                        promoted = cand_acc > inc_acc  # ablation A5 : promote si strictement mieux
-
-                    store_rewrite_log(
-                        conn,
-                        prompt_before_id=prompt_state.db_ids[current_key],
-                        prompt_after_id=candidate_id,
-                        error_batch=[{
-                            "axis": e.axis,
-                            "predicted": e.predicted,
-                            "expected": e.expected,
-                            "ig_media_id": e.ig_media_id,
-                            "post_scope": e.post_scope,
-                        } for e in target_errors],
-                        rewriter_reasoning=rewrite_result.reasoning,
-                        accepted=promoted,
-                        simulation_run_id=run_id,
-                        target_agent=target_agent,
-                        target_scope=target_scope,
-                        incumbent_accuracy=inc_acc,
-                        candidate_accuracy=cand_acc,
-                        eval_sample_size=len(eval_posts),
-                        iteration=rewrite_count,
-                    )
-
-                    if promoted:
+                if outcome.failed:
+                    failed_rewrite_attempts += 1
+                    consecutive_failures += 1
+                    error_buffer.clear()
+                else:
+                    if outcome.promoted:
                         promoted_rewrite_count += 1
-                        promote_prompt(conn, target_agent, target_scope, candidate_id)
-
-                        prompt_state.instructions[current_key] = rewrite_result.new_instructions
-                        prompt_state.db_ids[current_key] = candidate_id
-                        prompt_state.versions[current_key] = new_version
                         consecutive_failures = 0
-
-                        log.info("[REWRITE #%d] Incumbent %.1f%% vs Candidate %.1f%% (Δ=+%.1f%%)",
-                                 rewrite_count, inc_acc * 100, cand_acc * 100, delta_actual * 100)
-                        log.info("[REWRITE #%d] >>> PROMOTED (v%d → v%d %s/%s) <<<",
-                                 rewrite_count, new_version - 1, new_version, target_agent, target_scope or "all")
                     else:
                         rollback_rewrite_count += 1
                         consecutive_failures += 1
-                        log.info("[REWRITE #%d] Incumbent %.1f%% vs Candidate %.1f%% (Δ=%.1f%%)",
-                                 rewrite_count, inc_acc * 100, cand_acc * 100, delta_actual * 100)
-                        log.info("[REWRITE #%d] <<< ROLLBACK (patience %d/%d) <<<",
-                                 rewrite_count, consecutive_failures, args.patience)
 
-                    for match_record in double_eval_result.incumbent_records:
+                    for match_record in outcome.incumbent_records:
                         all_matches.append(match_record)
                         if match_record.match:
                             matches_by_axis[match_record.axis] += 1
 
-                    n_processed += len(eval_posts)
-                    cursor = eval_end
-                    error_buffer.clear()
-                except LLMCallError as exc:
-                    failed_rewrite_attempts += 1
-                    consecutive_failures += 1
-                    log.warning(
-                        "[REWRITE #%d] Échec pour %s/%s après retries. Buffer reset: %s",
-                        rewrite_count, target_agent, target_scope or "all", exc,
+                    n_processed += outcome.eval_window_consumed
+                    # Compteur rough : N bras × eval_window × 4 calls
+                    # (4 = descriptor + 3 classifieurs). Inclut incumbent.
+                    n_arms = 1 + (
+                        args.protegi_c if args.protegi_p < 2
+                        else args.protegi_c * args.protegi_p
                     )
+                    total_api_calls += outcome.eval_window_consumed * 4 * n_arms
+                    cursor += outcome.eval_window_consumed
                     error_buffer.clear()
 
                 if consecutive_failures >= args.patience:

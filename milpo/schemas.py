@@ -90,17 +90,65 @@ class PostPrediction(StrictBaseModel):
     features: DescriptorFeatures
 
 
-class RewritePayload(StrictBaseModel):
-    """Payload structuré attendu du rewriter."""
+# ── Schémas pour la boucle ProTeGi (Pryzant et al. 2023) ───────
 
-    reasoning: str
+
+class GradientPayload(StrictBaseModel):
+    """Sortie du LLM_∇ (critic) — liste de critiques en langage naturel."""
+
+    critiques: list[str]
+
+    @field_validator("critiques")
+    @classmethod
+    def validate_non_empty(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("critiques must not be empty")
+        for c in value:
+            if not c.strip():
+                raise ValueError("each critique must not be blank")
+        return value
+
+
+class EditCandidatePayload(StrictBaseModel):
+    """Un candidat édité par le LLM_δ (editor)."""
+
     new_instructions: str
+    reasoning: str
 
-    @field_validator("reasoning", "new_instructions")
+    @field_validator("new_instructions", "reasoning")
     @classmethod
     def validate_not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("must not be blank")
+        return value
+
+
+class EditCandidatesPayload(StrictBaseModel):
+    """Sortie du LLM_δ — liste de candidats édités."""
+
+    candidates: list[EditCandidatePayload]
+
+    @field_validator("candidates")
+    @classmethod
+    def validate_non_empty(cls, value: list[EditCandidatePayload]) -> list[EditCandidatePayload]:
+        if not value:
+            raise ValueError("candidates must not be empty")
+        return value
+
+
+class ParaphrasesPayload(StrictBaseModel):
+    """Sortie du LLM_mc (paraphraser) — liste de paraphrases."""
+
+    paraphrases: list[str]
+
+    @field_validator("paraphrases")
+    @classmethod
+    def validate_non_empty(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("paraphrases must not be empty")
+        for p in value:
+            if not p.strip():
+                raise ValueError("each paraphrase must not be blank")
         return value
 
 
