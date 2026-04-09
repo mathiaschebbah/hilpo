@@ -2,7 +2,7 @@
 
 Dépôt associé au mémoire de Mathias CHEBBAH, Master 1 MIAGE, Université Paris Dauphine.
 
-Pour prendre connaissance de la méthodologie de ce travail, consulter [ce fichier](docs/human_perspective.md).
+La note de sur l'utilisation de l'IA est disponible dans [ce fichier](docs/note_intelligence_artificielle.md).
 
 ## Contexte
 
