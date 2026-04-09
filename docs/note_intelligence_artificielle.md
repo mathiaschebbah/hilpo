@@ -19,6 +19,10 @@ Qualitativement, durant le travail de création de la pipeline, j'ai observé le
 
 - Je constate toutefois que le modèle m'a permis d'obtenir des pistes dont je n'avais pas connaissance auparavant. Ce qui aurait pris des jours de recherche sur des moteurs de recherche classiques ont été générés en drastiquement moins de temps. À mon sens, ces agents sont le plus pertiennts lorsque l'on les utilise afin d'acquérir le glossaire technique d'une solution. Demander à de tels agents de produire une idée novatrice n'est, pas encore, pertinent, mais les utiliser comme réellement un moteur de langage, capable de nous familiariser avec le vocabulaire d'une solution technique est un levier très puissant. En cela, je suis convaincu qu'utiliser de tels modèles pour produire un rendu universitaire est utile, car infine il fait progresser l'étudiant, sous réserve que ce dernier soit capable de produire une réflexion critique sur ce que les tokens de sortie du modèle produisent sémantiquement.
 
+## 1.2 Sur le contexte-engineering des agents
+
+- Garder un CLAUDE.md propre, court, concis et qui est rempli par humain aide drastiquement l'agent à connaître le projet. De plus, j'ai construit un skill /setup, qui permet en début de session de générer le contexte favorable à ce que l'agent puisse être utile dans la production de ses messages. Il inclut les commandes bash à exécuter pour requêter la base de données locale, les commandes ls à exécuter pour connaître l'arborescence du projet, et comprendre la structure. Garder un versionnement du CLAUDE.md aide également l'agent à connaître les différentes étapes qui ont fait grandir le projet, et de ne pas reproduire certains écueils.
+
 Je renderais plus tard à disposition les traces des agents au format .jsonl et fournirais une analyse plus détaillée, de mes sessions d'agents.
 
 
