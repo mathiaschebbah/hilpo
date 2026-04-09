@@ -141,6 +141,20 @@ function App() {
                         {current.media.length} slides
                       </span>
                     )}
+                    {current.post.timestamp && (
+                      <time
+                        dateTime={current.post.timestamp}
+                        className="text-xs text-neutral-400 tabular-nums"
+                        title={new Date(current.post.timestamp).toLocaleString('fr-FR', {
+                          year: 'numeric', month: 'long', day: 'numeric',
+                          hour: '2-digit', minute: '2-digit',
+                        })}
+                      >
+                        {new Date(current.post.timestamp).toLocaleDateString('fr-FR', {
+                          year: 'numeric', month: 'short', day: 'numeric',
+                        })}
+                      </time>
+                    )}
                     {current.post.shortcode && (
                       <a
                         href={`https://www.instagram.com/p/${current.post.shortcode}/`}

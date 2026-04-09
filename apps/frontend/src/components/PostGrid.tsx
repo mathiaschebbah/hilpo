@@ -6,6 +6,7 @@ import {
   fetchPostGrid,
   fetchCategories,
   fetchVisualFormats,
+  fetchYears,
   submitAnnotationsBulk,
   type BulkAnnotationItem,
 } from '@/lib/api'
@@ -52,8 +53,10 @@ export function PostGrid({ onOpenPost }: Props) {
   const [categoryFilter, setCategoryFilter] = useUrlState<string>('g_category', '')
   const [splitFilter, setSplitFilter] = useUrlState<string>('g_split', '')
   const [formatFilter, setFormatFilter] = useUrlState<string>('g_format', '')
+  const [yearFilter, setYearFilter] = useUrlState<string>('g_year', '')
   const [categories, setCategories] = useState<Lookup[]>([])
   const [visualFormats, setVisualFormats] = useState<Lookup[]>([])
+  const [years, setYears] = useState<number[]>([])
   const [loading, setLoading] = useState(true)
   const [bulkLoading, setBulkLoading] = useState(false)
   const [bulkMessage, setBulkMessage] = useState<string | null>(null)
@@ -62,10 +65,12 @@ export function PostGrid({ onOpenPost }: Props) {
   useEffect(() => {
     fetchCategories().then(setCategories)
     fetchVisualFormats().then(setVisualFormats)
+    fetchYears().then(setYears)
   }, [])
 
   useEffect(() => {
     setLoading(true)
+    const yearParsed = yearFilter ? parseInt(yearFilter, 10) : undefined
     fetchPostGrid({
       offset,
       limit: PAGE_SIZE,
@@ -73,12 +78,13 @@ export function PostGrid({ onOpenPost }: Props) {
       category: categoryFilter || undefined,
       split: splitFilter || undefined,
       visual_format: formatFilter || undefined,
+      year: Number.isFinite(yearParsed) ? yearParsed : undefined,
     }).then(data => {
       setItems(data.items)
       setTotal(data.total)
       setLoading(false)
     })
-  }, [offset, statusFilter, categoryFilter, splitFilter, formatFilter, reloadToken])
+  }, [offset, statusFilter, categoryFilter, splitFilter, formatFilter, yearFilter, reloadToken])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
@@ -206,6 +212,22 @@ export function PostGrid({ onOpenPost }: Props) {
             <SelectItem value="all">Tous formats</SelectItem>
             {visualFormats.map(vf => (
               <SelectItem key={vf.id} value={vf.name}>{vf.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={yearFilter || 'all'} onValueChange={v => {
+          const next = v ?? ''
+          setYearFilter(next === 'all' ? '' : next)
+          setOffset(0)
+        }}>
+          <SelectTrigger className="w-28 h-8 text-xs">
+            {yearFilter || 'Toutes années'}
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Toutes années</SelectItem>
+            {years.map(y => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
             ))}
           </SelectContent>
         </Select>

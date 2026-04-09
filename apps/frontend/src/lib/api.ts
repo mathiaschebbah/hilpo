@@ -133,6 +133,10 @@ export async function fetchVisualFormats(): Promise<Lookup[]> {
   return requestJson<Lookup[]>('/posts/visual-formats')
 }
 
+export async function fetchYears(): Promise<number[]> {
+  return requestJson<number[]>('/posts/years')
+}
+
 export async function fetchPostGrid(params: {
   offset?: number
   limit?: number
@@ -140,6 +144,7 @@ export async function fetchPostGrid(params: {
   category?: string
   split?: string
   visual_format?: string
+  year?: number
   annotator?: string
 } = {}): Promise<PostGridResponse> {
   const qs = new URLSearchParams()
@@ -149,6 +154,7 @@ export async function fetchPostGrid(params: {
   if (params.category) qs.set('category', params.category)
   if (params.split) qs.set('split', params.split)
   if (params.visual_format) qs.set('visual_format', params.visual_format)
+  if (params.year !== undefined) qs.set('year', String(params.year))
   qs.set('annotator', params.annotator ?? 'mathias')
   return requestJson<PostGridResponse>(`/posts/?${qs}`)
 }

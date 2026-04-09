@@ -146,6 +146,7 @@ class PostRepository:
         self, annotator: str, offset: int = 0, limit: int = 50,
         status: str | None = None, category: str | None = None,
         split: str | None = None, visual_format: str | None = None,
+        year: int | None = None,
     ) -> tuple[list[dict], int]:
         where_clauses = []
         params: dict = {"annotator": annotator, "offset": offset, "limit": limit}
@@ -168,6 +169,10 @@ class PostRepository:
         if visual_format:
             where_clauses.append("COALESCE(avf.name, vf.name) = :visual_format")
             params["visual_format"] = visual_format
+
+        if year is not None:
+            where_clauses.append("EXTRACT(YEAR FROM p.timestamp)::int = :year")
+            params["year"] = year
 
         where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -217,3 +222,16 @@ class PostRepository:
             text("SELECT id, name FROM visual_formats ORDER BY name")
         )
         return [dict(r) for r in result.mappings().all()]
+
+    async def find_all_years(self) -> list[int]:
+        """Retourne les années distinctes présentes dans le sample, tri décroissant."""
+        result = await self.db.execute(
+            text("""
+                SELECT DISTINCT EXTRACT(YEAR FROM p.timestamp)::int AS year
+                FROM sample_posts sp
+                JOIN posts p ON p.ig_media_id = sp.ig_media_id
+                WHERE p.timestamp IS NOT NULL
+                ORDER BY year DESC
+            """)
+        )
+        return [r["year"] for r in result.mappings().all()]

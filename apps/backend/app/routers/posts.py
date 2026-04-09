@@ -22,9 +22,12 @@ async def list_posts(
     category: str | None = None,
     split: str | None = None,
     visual_format: str | None = None,
+    year: int | None = None,
     service: PostService = Depends(get_service),
 ):
-    return await service.get_grid(annotator, offset, limit, status, category, split, visual_format)
+    return await service.get_grid(
+        annotator, offset, limit, status, category, split, visual_format, year,
+    )
 
 
 @router.get("/next", response_model=NextPostOut)
@@ -53,6 +56,12 @@ async def get_categories(service: PostService = Depends(get_service)):
 @router.get("/visual-formats", response_model=list[LookupOut])
 async def get_visual_formats(service: PostService = Depends(get_service)):
     return await service.get_visual_formats()
+
+
+@router.get("/years", response_model=list[int])
+async def get_years(service: PostService = Depends(get_service)):
+    """Liste des années distinctes présentes dans le sample (tri décroissant)."""
+    return await service.get_years()
 
 
 @router.get("/{ig_media_id}", response_model=NextPostOut)

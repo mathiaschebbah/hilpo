@@ -84,10 +84,10 @@ class PostService:
     async def get_grid(
         self, annotator: str, offset: int, limit: int,
         status: str | None, category: str | None, split: str | None = None,
-        visual_format: str | None = None,
+        visual_format: str | None = None, year: int | None = None,
     ) -> PostGridPage:
         rows, total = await self.repository.find_all_sample_posts(
-            annotator, offset, limit, status, category, split, visual_format,
+            annotator, offset, limit, status, category, split, visual_format, year,
         )
 
         # Signer toutes les thumbnails en parallèle (au lieu de séquentiellement)
@@ -122,3 +122,6 @@ class PostService:
     async def get_visual_formats(self) -> list[LookupOut]:
         rows = await self.repository.find_all_visual_formats()
         return [LookupOut(**r) for r in rows]
+
+    async def get_years(self) -> list[int]:
+        return await self.repository.find_all_years()
