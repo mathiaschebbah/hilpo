@@ -42,7 +42,7 @@ Ouvre **au moins** ces modules clés pour savoir ce qui tourne vraiment :
 
 ## Étape 3 — Inspection de la BDD
 
-Les credentials sont dans `.env` (`HILPO_*` — nom hérité avant le rename v3.0). Utilise `PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d hilpo` (vérifier le nom de la DB dans `.env` en cas de doute).
+Les credentials sont dans `.env` (variable `HILPO_DATABASE_DSN` — préfixe hérité avant le rename v3.0). DSN actuel : `postgresql://hilpo:hilpo@localhost:5433/hilpo`. Utilise donc `PGPASSWORD=hilpo psql -h localhost -p 5433 -U hilpo -d hilpo` (si ça échoue, relire `.env` au cas où le DSN aurait changé).
 
 Commandes utiles (à lancer en parallèle) :
 
@@ -52,7 +52,10 @@ Commandes utiles (à lancer en parallèle) :
 
 -- Volumétrie posts et annotations
 SELECT COUNT(*) FROM posts;
-SELECT split, COUNT(*) FROM posts WHERE split IS NOT NULL GROUP BY split;
+
+-- Splits : la colonne `split` est sur `sample_posts`, pas sur `posts`
+SELECT split, COUNT(*) FROM sample_posts GROUP BY split;
+
 SELECT COUNT(*) FROM annotations;
 
 -- Prompts actifs (par agent, scope, source)
@@ -61,8 +64,11 @@ FROM prompt_versions
 WHERE status = 'active' AND simulation_run_id IS NULL
 ORDER BY agent, scope, source;
 
--- Derniers simulation_runs
-SELECT id, kind, started_at, finished_at, total_cost_usd, notes
+-- Derniers simulation_runs (pas de colonnes `kind` ni `notes` — cf. `\d simulation_runs`)
+SELECT id, status, started_at, finished_at, total_cost_usd,
+       final_accuracy_category AS cat,
+       final_accuracy_visual_format AS vf,
+       final_accuracy_strategy AS strat
 FROM simulation_runs
 ORDER BY id DESC LIMIT 5;
 
@@ -106,7 +112,7 @@ BDD (hilpo @ localhost:5433)
 - Posts : N total, dev=X / test=Y / unassigned=Z
 - Annotations : N
 - Prompts actifs : <agent/scope/source/version pour chacun>
-- Dernier run : id=N, kind=..., cost=$..., <résumé>
+- Dernier run : id=N, status=..., cost=$..., cat/vf/strat=...
 
 Services
 --------

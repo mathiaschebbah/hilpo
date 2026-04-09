@@ -78,44 +78,43 @@ Les REELS sont significativement plus durs que les FEED sur catégorie et visual
 | post_interview → post_blueprint | 3 | Confusion gabarit. |
 | post_news → post_serie_mood_texte | 3 | |
 
-Ces patterns sont **identiques aux observations du run id=2 (pré-fix)** — ce sont des limitations des **prompts v0**, pas du modèle. C'est exactement ce que la boucle MILPO doit corriger en simulation.
+Ces patterns d'erreur sont des **limitations des prompts v0**, pas du modèle — c'est exactement ce que la boucle MILPO doit corriger en simulation.
 
 ### Visual_format — accuracy par format (≥ 3 occurrences test)
 
 22 formats ont au moins 3 occurrences dans le test set, classés par fréquence :
 
-| Format | Scope | Test | OK | Accuracy | Δ vs run id=2 | Note |
-|--------|-------|------|----|----------|---------------|------|
-| post_mood | FEED | 113 | 109 | **96%** | +2 pts | Format dominant, parfaitement classifié |
-| post_news | FEED | 111 | 78 | 70% | +2 pts | Toujours 22 confusions ← post_mood (anciens news) |
-| post_chiffre | FEED | 22 | 4 | **18%** | **-23 pts** ⚠️ | Régression : Gemini 3 confond plus avec post_news |
-| post_quote | FEED | 21 | 17 | 81% | n/a | Bien classifié, signal "guillemets" clair |
-| post_selection | FEED | 20 | 7 | **35%** | **-15 pts** ⚠️ | Régression : confusion avec serie_mood_texte |
-| reel_voix_off | REELS | 17 | 15 | **88%** | **+6 pts** | Audio bien détecté par Gemini 3 |
-| reel_news | REELS | 16 | 5 | 31% | +6 pts | Reels sans gabarit Views classés reel_mood |
-| reel_wrap_up | REELS | 12 | 3 | **25%** | **+25 pts** | Gros gain : Gemini 3 voit le montage post-événement |
-| reel_interview | REELS | 8 | 2 | 25% | n/a | Confusion avec reel_sitdown |
-| post_wrap_up | FEED | 8 | 0 | 0% | = | Toujours invisible — absorbé par mood |
-| post_sorties_musique | FEED | 7 | 5 | 71% | n/a | Bien classifié |
-| post_classement | FEED | 7 | 3 | 43% | n/a | |
-| post_interview | FEED | 7 | 3 | 43% | n/a | |
-| post_serie_mood_texte | FEED | 6 | 2 | 33% | n/a | |
-| post_en_savoir_plus_selection | FEED | 6 | 0 | 0% | = | Variante non distinguée |
-| post_en_savoir_plus | FEED | 5 | 0 | 0% | = | Toujours invisible |
-| post_article | FEED | 4 | 3 | 75% | n/a | |
-| post_stills | FEED | 4 | 4 | **100%** | = | Parfait — screenshots distinctifs |
-| post_playlist_views_essentials | FEED | 3 | 2 | 67% | n/a | |
-| reel_mood | REELS | 3 | 3 | **100%** | n/a | |
-| post_frise | FEED | 3 | 0 | 0% | n/a | Format rare invisible |
-| post_double_selection | FEED | 3 | 3 | **100%** | n/a | |
+| Format | Scope | Test | OK | Accuracy | Note |
+|--------|-------|------|----|----------|------|
+| post_mood | FEED | 113 | 109 | **96%** | Format dominant, parfaitement classifié |
+| post_news | FEED | 111 | 78 | 70% | 22 confusions ← post_mood (anciens news sans overlay) |
+| post_chiffre | FEED | 22 | 4 | **18%** | Confusion avec post_news (chiffre marquant sous-priorisé face au texte d'actualité) |
+| post_quote | FEED | 21 | 17 | 81% | Bien classifié, signal "guillemets" clair |
+| post_selection | FEED | 20 | 7 | **35%** | Confusion avec serie_mood_texte sur les carousels structurés |
+| reel_voix_off | REELS | 17 | 15 | **88%** | Audio bien détecté par le descripteur |
+| reel_news | REELS | 16 | 5 | 31% | Reels sans gabarit Views classés reel_mood |
+| reel_wrap_up | REELS | 12 | 3 | **25%** | Montage post-événement partiellement détecté |
+| reel_interview | REELS | 8 | 2 | 25% | Confusion avec reel_sitdown |
+| post_wrap_up | FEED | 8 | 0 | 0% | Invisible — absorbé par mood |
+| post_sorties_musique | FEED | 7 | 5 | 71% | Bien classifié |
+| post_classement | FEED | 7 | 3 | 43% | |
+| post_interview | FEED | 7 | 3 | 43% | |
+| post_serie_mood_texte | FEED | 6 | 2 | 33% | |
+| post_en_savoir_plus_selection | FEED | 6 | 0 | 0% | Variante non distinguée |
+| post_en_savoir_plus | FEED | 5 | 0 | 0% | Invisible |
+| post_article | FEED | 4 | 3 | 75% | |
+| post_stills | FEED | 4 | 4 | **100%** | Parfait — screenshots distinctifs |
+| post_playlist_views_essentials | FEED | 3 | 2 | 67% | |
+| reel_mood | REELS | 3 | 3 | **100%** | |
+| post_frise | FEED | 3 | 0 | 0% | Format rare invisible |
+| post_double_selection | FEED | 3 | 3 | **100%** | |
 
-**Observation clé** : le changement de descripteur (Qwen → Gemini 3 Flash Preview) a un effet **non uniforme** sur les formats individuels :
-- **Gains** sur les REELS (`reel_voix_off` +6, `reel_wrap_up` +25, `reel_news` +6) — Gemini 3 perçoit mieux les vidéos.
-- **Gains modérés** sur `post_mood` (+2) et `post_news` (+2).
-- **Régressions notables** sur `post_chiffre` (-23) et `post_selection` (-15) — Gemini 3 a tendance à les confondre avec `post_news` et `post_serie_mood_texte` respectivement. Hypothèse : Gemini 3 priorise davantage le texte d'actualité visible que le chiffre marquant comme signal.
-- **Stabilité** sur les formats rares à 0% (`post_wrap_up`, `post_en_savoir_plus`) — ils restent invisibles, absorbés par les formats dominants.
+**Observation clé** : l'architecture (descripteur Gemini 3 Flash Preview + classifieurs Qwen 3.5 Flash) n'est **pas uniforme** sur les formats :
 
-Le gain net `+1.1 pt sur visual_format global` masque ces compensations. Ces régressions sur `post_chiffre` et `post_selection` deviennent des **cibles prioritaires pour la boucle MILPO** : ce sont des cas où l'instruction I_t actuelle gagne à être affinée pour mieux discriminer. Les gains sur les REELS, eux, sont structurels (modèle plus capable) et ne nécessitent pas d'optimisation supplémentaire.
+- **FEED dominants** bien ou parfaitement classés (`post_mood` 96%, `post_quote` 81%, `post_stills` 100%) — signaux visuels clairs.
+- **REELS** bien détectés quand l'audio ou le montage est distinctif (`reel_voix_off` 88%, `reel_mood` 100%), plus faibles sans gabarit identifiable (`reel_news` 31%, `reel_interview` 25%, `reel_wrap_up` 25%).
+- **Confusions persistantes** sur `post_chiffre` (18%, absorbé par post_news) et `post_selection` (35%, absorbé par serie_mood_texte). Ce sont les **cibles prioritaires pour la boucle MILPO** : cas où l'instruction I_t gagne à être affinée pour mieux discriminer.
+- **Formats rares invisibles** : `post_wrap_up`, `post_en_savoir_plus`, `post_en_savoir_plus_selection`, `post_frise` restent à 0% — absorbés par les formats dominants.
 
 ### Coût détaillé
 
@@ -128,30 +127,6 @@ Le gain net `+1.1 pt sur visual_format global` masque ces compensations. Ces ré
 | **TOTAL** | | **1 748** | **6.26M** | **1.32M** | | **$2.68** |
 
 Durée totale : 25.4 min (concurrence 10 posts × 20 appels API, 1748 appels au total). Coût stocké en BDD via `simulation_runs.total_cost_usd = 2.68`. Tarifs OpenRouter : Gemini 3 Flash Preview $0.50/M input + $3.00/M output, Qwen 3.5 Flash $0.065/M input/output.
-
-### Évolution depuis le run id=2 (5 avril, baseline obsolète)
-
-| Métrique | Run id=2 (5 avril) | Run id=7 (6 avril) | Δ |
-|---|---|---|---|
-| Couverture | 434/437 (99.3%) | **437/437 (100%)** | +3 posts |
-| Accuracy catégorie | 87.3% | 86.7% | -0.6 pt |
-| Accuracy visual_format | 64.3% | **65.4%** | +1.1 pt |
-| Accuracy stratégie | 93.5% | **94.5%** | +1.0 pt |
-| Visual_format FEED | 67.5% | **68.0%** | +0.5 pt |
-| **Visual_format REELS** | **46.2%** | **50.8%** | **+4.6 pts** ⭐ |
-| Catégorie REELS | 72.3% | **73.8%** | +1.5 pt |
-| Coût total | $1.14 | $2.68 | +$1.54 (+135%) |
-| Durée wall | ~5 min | 25.4 min | +20 min |
-
-Le passage à Gemini 3 Flash Preview améliore principalement le scope **REELS visual_format (+4.6 pts)**, confirmant que le nouveau descripteur perçoit mieux les vidéos. Les axes catégorie et stratégie sont stables ou légèrement améliorés. La hausse de coût et de latence est le prix de la **fiabilité** : couverture parfaite (100%), pas d'échec sur les gros carousels jusqu'à 20 slides, pas d'effondrement sous concurrence.
-
-### Historique de la baseline (traçabilité)
-
-Le run id=7 est le **3e run B0** du projet — les 2 précédents ont été invalidés par des fixes de pipeline successifs :
-
-1. **Run id=2** (5 avril, supprimé) : 87.3% / 64.3% / 93.5%, $1.14, 434/437. Configuration intermédiaire qui a révélé deux bugs cachés : (a) `response_format=json_schema` strict n'est pas honoré par Qwen sur les enums binaires (commit `0b3bd8b` a fixé le bug en revenant au tool calling), (b) Qwen 3.5 Flash a une limite carousel à ~8 images. Backup SQL conservé dans `data/backups/run_2_2026-04-06_11-32.sql`.
-2. **Runs id=4, 5, 6** (6 avril, supprimés) : tous tués en cours par l'humain après détection empirique des bugs descripteurs (Qwen carousels >8 + Gemini 2.5 Flash instable sous concurrence Google AI Studio).
-3. **Run id=7** (6 avril, courant) : configuration finale stabilisée — descripteur Gemini 3 Flash Preview pour les 2 scopes (commit `7e352ab`), classifieurs Qwen 3.5 Flash + tool calling, prompts v0 lockés via migration 006. **Couverture 100%, validation empirique complète.**
 
 ### Comparaison empirique avec DSPy MIPROv2 (related_work/dspy_baseline)
 
