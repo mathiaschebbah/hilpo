@@ -30,6 +30,8 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+from rich.live import Live
+
 from milpo.async_inference import async_classify_batch, async_classify_post, get_async_client
 from milpo.bandits import successive_rejects
 from milpo.config import MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER
@@ -667,12 +669,19 @@ async def async_multi_evaluate(
     client = get_async_client()
     semaphore = asyncio.Semaphore(max_concurrent_api)
 
+    # Pré-calcul des prompts par (arm_id, scope) — hors coroutines pour éviter
+    # N×arms appels DB synchrones bloquant l'event loop.
+    scopes_needed = {post.media_product_type for _, post, _ in mismatch_posts + normal_posts}
+    prompts_cache: dict[tuple[int, str], PromptSet] = {}
+    for arm_id in arms:
+        for sc in scopes_needed:
+            prompts_cache[(arm_id, sc)] = build_prompts_from_state(arm_states[arm_id], conn, sc)
+
     # ── 1. Traiter les posts mismatch en parallèle (incumbent seulement) ──
     async def classify_mismatch(offset: int, post: PostInput, annotation: dict):
         scope = post.media_product_type
         labels = labels_by_scope[scope]
-        inc_state = arm_states[incumbent_arm_id]
-        prompts = build_prompts_from_state(inc_state, conn, scope)
+        prompts = prompts_cache[(incumbent_arm_id, scope)]
         result = await async_classify_post(
             post, prompts,
             labels["category"], labels["visual_format"], labels["strategy"],
@@ -684,8 +693,7 @@ async def async_multi_evaluate(
     async def classify_normal(offset: int, post: PostInput, annotation: dict, arm_id: int):
         scope = post.media_product_type
         labels = labels_by_scope[scope]
-        state = arm_states[arm_id]
-        prompts = build_prompts_from_state(state, conn, scope)
+        prompts = prompts_cache[(arm_id, scope)]
         result = await async_classify_post(
             post, prompts,
             labels["category"], labels["visual_format"], labels["strategy"],
@@ -1192,49 +1200,9 @@ async def run_protegi_rewrite(
     )
 
 
-# ── Display ───────────────────────────────────────────────────
+# ── Display (Rich Live TUI) ──────────────────────────────────
 
-
-def display_progress(cursor, total, matches_by_axis, n_processed, error_count, batch_size, prompt_versions, cost, t0):
-    elapsed = time.monotonic() - t0
-    rate = n_processed / elapsed if elapsed > 0 else 0
-    eta = (total - cursor) / rate if rate > 0 else 0
-    pct = cursor * 100 // total if total else 0
-    bar = "█" * (cursor * 30 // total) + "░" * (30 - cursor * 30 // total)
-
-    acc_vf = matches_by_axis["visual_format"] / n_processed * 100 if n_processed else 0
-    acc_cat = matches_by_axis["category"] / n_processed * 100 if n_processed else 0
-    acc_str = matches_by_axis["strategy"] / n_processed * 100 if n_processed else 0
-
-    # Version max affichée
-    max_v = max(prompt_versions.values()) if prompt_versions else 0
-
-    print(
-        f"\r  {bar} {cursor:>4}/{total} ({pct:>2}%) "
-        f"| vf={acc_vf:.1f}% cat={acc_cat:.1f}% str={acc_str:.1f}% "
-        f"| v{max_v} "
-        f"| err={error_count}/{batch_size} "
-        f"| {rate:.1f}p/s ETA {eta:.0f}s "
-        f"| est~${cost:.2f}",
-        end="", flush=True,
-    )
-
-
-def display_rolling(cursor, all_matches, window=50):
-    """Affiche l'accuracy rolling toutes les 50 positions."""
-    if cursor % window != 0 or cursor == 0:
-        return
-    recent = all_matches[-window:]
-    by_axis = {"category": [], "visual_format": [], "strategy": []}
-    for m in recent:
-        by_axis[m.axis].append(m.match)
-    parts = []
-    for axis in ("category", "visual_format", "strategy"):
-        if by_axis[axis]:
-            acc = sum(by_axis[axis]) / len(by_axis[axis]) * 100
-            short = {"category": "cat", "visual_format": "vf", "strategy": "str"}[axis]
-            parts.append(f"{short}={acc:.1f}%")
-    print(f"\n  [ACC @{cursor}] {' | '.join(parts)} (rolling {window})")
+from milpo.tui import SimulationDisplay
 
 
 # ── Main ──────────────────────────────────────────────────────
@@ -1374,9 +1342,7 @@ async def main():
         for scope in ("FEED", "REELS"):
             labels_by_scope[scope] = build_labels(conn, scope)
 
-        # ── 7. Boucle principale (async micro-batches) ──
-        log.info("Classification en cours (micro-batches de %d posts)...", args.micro_batch)
-
+        # ── 7. Boucle principale (async micro-batches + Rich Live TUI) ──
         error_buffer: list[ErrorCase] = []
         all_matches: list[MatchRecord] = []
         cursor = 0
@@ -1384,8 +1350,10 @@ async def main():
         rewrites_stopped = False
 
         total = len(post_inputs)
+        display = SimulationDisplay(run_id=run_id, total=total, batch_size=args.batch_size)
 
-        while cursor < total:
+        with Live(display.build(), refresh_per_second=2) as live:
+          while cursor < total:
             # Construire les prompts par scope pour ce batch (basé sur prompt_state actuel)
             prompts_by_scope: dict[str, PromptSet] = {}
             for scope in ("FEED", "REELS"):
@@ -1409,11 +1377,12 @@ async def main():
 
             # Post-traitement séquentiel : stocker, évaluer, accumuler erreurs
             batch_cursor = cursor
+            batch_skipped = 0
             for post in micro_batch:
                 result = results_by_id.get(post.ig_media_id)
                 if result is None:
-                    # Classification échouée pour ce post
                     skipped_classification_posts += 1
+                    batch_skipped += 1
                     batch_cursor += 1
                     continue
 
@@ -1438,10 +1407,15 @@ async def main():
                 batch_cursor += 1
 
             cursor = batch_cursor
+            if batch_skipped:
+                display.skipped = skipped_classification_posts
+                display.add_event(f"{batch_skipped} post(s) skipped (LLM error)")
 
-            display_progress(cursor, total, matches_by_axis, n_processed,
-                             len(error_buffer), args.batch_size, prompt_state.versions, live_cost_estimate_usd, t0)
-            display_rolling(cursor, all_matches)
+            # Mettre à jour le display
+            display.sync(cursor, n_processed, matches_by_axis,
+                         len(error_buffer), live_cost_estimate_usd, prompt_state.versions)
+            display.update_rolling(all_matches)
+            live.update(display.build())
 
             # ── Trigger rewrite ? ──
             if (
@@ -1453,9 +1427,9 @@ async def main():
                 target_errors = get_target_errors(error_buffer, target_agent, target_scope)
 
                 if not target_errors:
-                    log.warning("[REWRITE] Aucune erreur exploitable pour %s/%s. Buffer reset.",
-                                target_agent, target_scope or "all")
+                    display.add_event(f"No exploitable errors for {target_agent}/{target_scope or 'all'}")
                     error_buffer.clear()
+                    live.update(display.build())
                     continue
 
                 eval_end = min(cursor + args.eval_window, total)
@@ -1463,21 +1437,18 @@ async def main():
 
                 if len(eval_posts) < 5:
                     skipped_rewrite_count += 1
-                    print()
-                    log.warning(
-                        "[REWRITE] Pas assez de posts pour évaluer (%d). Skip.",
-                        len(eval_posts),
-                    )
+                    display.add_event(f"Rewrite skipped (only {len(eval_posts)} posts left for eval)")
                     error_buffer.clear()
+                    live.update(display.build())
                     continue
 
                 rewrite_count += 1
-                print()  # newline après la progress bar
-                log.info(
-                    "[REWRITE #%d] Buffer plein (%d erreurs). Cible: %s/%s (%d erreurs)",
-                    rewrite_count, len(error_buffer),
-                    target_agent, target_scope or "all", len(target_errors),
+                display.phase = f"rewrite #{rewrite_count} — {target_agent}/{target_scope or 'all'}"
+                display.add_event(
+                    f"REWRITE #{rewrite_count} triggered — {target_agent}/{target_scope or 'all'} "
+                    f"({len(target_errors)} errors)"
                 )
+                live.update(display.build())
 
                 outcome = await run_protegi_rewrite(
                     args, conn, run_id, rewrite_count,
@@ -1489,14 +1460,21 @@ async def main():
                 if outcome.failed:
                     failed_rewrite_attempts += 1
                     consecutive_failures += 1
+                    display.add_event(f"REWRITE #{rewrite_count} FAILED")
                     error_buffer.clear()
                 else:
                     if outcome.promoted:
                         promoted_rewrite_count += 1
                         consecutive_failures = 0
+                        delta = (outcome.candidate_acc - outcome.incumbent_acc) * 100
+                        display.add_event(
+                            f"REWRITE #{rewrite_count} PROMOTED "
+                            f"({outcome.incumbent_acc*100:.1f}% -> {outcome.candidate_acc*100:.1f}%, +{delta:.1f}%)"
+                        )
                     else:
                         rollback_rewrite_count += 1
                         consecutive_failures += 1
+                        display.add_event(f"REWRITE #{rewrite_count} ROLLBACK")
 
                     for match_record in outcome.incumbent_records:
                         all_matches.append(match_record)
@@ -1504,8 +1482,6 @@ async def main():
                             matches_by_axis[match_record.axis] += 1
 
                     n_processed += outcome.eval_window_consumed
-                    # Compteur rough : N bras × eval_window × 4 calls
-                    # (4 = descriptor + 3 classifieurs). Inclut incumbent.
                     n_arms = 1 + (
                         args.protegi_c if args.protegi_p < 2
                         else args.protegi_c * args.protegi_p
@@ -1514,12 +1490,17 @@ async def main():
                     cursor += outcome.eval_window_consumed
                     error_buffer.clear()
 
-                if consecutive_failures >= args.patience:
-                    log.info("[STOP] Patience épuisée (%d/%d). Poursuite sans rewrite.",
-                             consecutive_failures, args.patience)
-                    rewrites_stopped = True
+                display.phase = "classification"
+                display.rewrites_promoted = promoted_rewrite_count
+                display.rewrites_rollback = rollback_rewrite_count
+                display.sync(cursor, n_processed, matches_by_axis,
+                             len(error_buffer), live_cost_estimate_usd, prompt_state.versions)
+                live.update(display.build())
 
-        print()  # newline finale
+                if consecutive_failures >= args.patience:
+                    display.add_event(f"Patience exhausted ({consecutive_failures}/{args.patience})")
+                    live.update(display.build())
+                    rewrites_stopped = True
 
         metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)
         finish_run(conn, run_id, metrics)

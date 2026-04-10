@@ -34,7 +34,11 @@ from milpo.schemas import (
 def get_async_client() -> AsyncOpenAI:
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY non définie.")
-    return AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
+    return AsyncOpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
+        timeout=90.0,  # évite le hang infini sur calls Gemini/OpenRouter bloqués
+    )
 
 
 async def async_call_descriptor(
