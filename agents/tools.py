@@ -34,6 +34,8 @@ from milpo.db import (
 from milpo.schemas import DescriptorFeatures, build_json_schema_response_format
 
 from agents.config import (
+    ADVISOR_CACHE_TTL,
+    ADVISOR_MAX_USES,
     DEFAULT_EXAMPLES,
     MAX_EXAMPLES_PER_CALL,
     MODEL_ADVISOR,
@@ -80,6 +82,8 @@ def _perception_tools(prompts: ToolPrompts) -> list[dict]:
             "type": "advisor_20260301",
             "name": "advisor",
             "model": MODEL_ADVISOR,
+            "max_uses": ADVISOR_MAX_USES,
+            "caching": {"type": "ephemeral", "ttl": ADVISOR_CACHE_TTL},
         },
         {
             "name": "describe_media",

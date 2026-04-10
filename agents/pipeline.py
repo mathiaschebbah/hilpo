@@ -169,11 +169,21 @@ def _run_agent_phase(
                         type="advisor_call", phase=axis,
                     ))
 
-        # Collecter le texte et détecter les advisor_tool_result
+        # Collecter le texte, détecter advisor_tool_result_error
         for block in response.content:
             if hasattr(block, "text"):
                 full_reasoning.append(block.text)
             # server_tool_use (advisor) est déjà tracé via iterations ci-dessus
+            # Tracer les erreurs advisor (overloaded, max_uses_exceeded, etc.)
+            if getattr(block, "type", None) == "advisor_tool_result":
+                content = getattr(block, "content", None)
+                if content and getattr(content, "type", None) == "advisor_tool_result_error":
+                    error_code = getattr(content, "error_code", "unknown")
+                    log.warning("  %s: advisor error — %s", axis, error_code)
+                    trace_events.append(TraceEvent(
+                        type="advisor_error", phase=axis,
+                        data={"error_code": error_code},
+                    ))
 
         # Chercher submit_classification parmi les tool_use blocks
         all_tool_uses = [b for b in response.content if b.type == "tool_use"]

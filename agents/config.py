@@ -31,3 +31,7 @@ MAX_EXAMPLES_PER_CALL = 5
 # Agentic loop
 MAX_TOOL_ROUNDS = 15  # safety: max de rounds tool-use par phase
 MAX_TOKENS_PER_TURN = 4096
+
+# Advisor
+ADVISOR_MAX_USES = 2          # max appels advisor par phase (requête)
+ADVISOR_CACHE_TTL = "5m"      # TTL du cache advisor-side (ephemeral)
