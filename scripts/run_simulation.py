@@ -30,7 +30,9 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+from rich.console import Console
 from rich.live import Live
+from rich.logging import RichHandler
 
 from milpo.async_inference import async_classify_batch, async_classify_post, get_async_client
 from milpo.bandits import successive_rejects
@@ -76,6 +78,8 @@ PROMPT_KEYS: list[tuple[str, str | None]] = [
     ("strategy", None),
 ]
 
+console = Console()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(message)s",
@@ -84,6 +88,7 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("milpo").setLevel(logging.WARNING)
 log = logging.getLogger("simulation")
 
 
@@ -1352,7 +1357,9 @@ async def main():
         total = len(post_inputs)
         display = SimulationDisplay(run_id=run_id, total=total, batch_size=args.batch_size)
 
-        with Live(display.build(), refresh_per_second=2) as live:
+        # Silence les logs pendant le Live (tout passe par display.add_event)
+        log.setLevel(logging.WARNING)
+        with Live(display.build(), refresh_per_second=2, console=console) as live:
           while cursor < total:
             # Construire les prompts par scope pour ce batch (basé sur prompt_state actuel)
             prompts_by_scope: dict[str, PromptSet] = {}
@@ -1501,6 +1508,9 @@ async def main():
                     display.add_event(f"Patience exhausted ({consecutive_failures}/{args.patience})")
                     live.update(display.build())
                     rewrites_stopped = True
+
+        # Restaurer le logging pour le résumé final
+        log.setLevel(logging.INFO)
 
         metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)
         finish_run(conn, run_id, metrics)
