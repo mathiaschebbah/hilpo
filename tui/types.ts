@@ -12,7 +12,7 @@ export interface TelemetryState {
   nProcessed: number;
   rate: number;
   elapsedSec: number;
-  etaSec: number;
+  etaSec: number | null;
 
   accuracy: { category: number; visualFormat: number; strategy: number };
   rolling50: { cat: number; vf: number; str: number } | null;

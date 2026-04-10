@@ -97,6 +97,7 @@ const App: React.FC = () => {
   const [pythonExited, setPythonExited] = useState(false);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const childRef = useRef<ChildProcess | null>(null);
+  const stderrRef = useRef("");
 
   useEffect(() => {
     let cleanedUp = false;
@@ -143,7 +144,7 @@ const App: React.FC = () => {
       const args = process.argv.slice(2).filter((a) => a !== "--");
       const child = spawn("uv", ["run", "python", "scripts/run_simulation.py", ...args], {
         cwd: projectRoot,
-        stdio: ["inherit", "ignore", "ignore"],
+        stdio: ["inherit", "ignore", "pipe"],
         env: {
           ...process.env,
           MILPO_WS_HOST: WS_HOST,
@@ -154,6 +155,10 @@ const App: React.FC = () => {
 
       child.on("error", (error) => {
         setStartupError(`Python process failed to start: ${error.message}`);
+      });
+
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderrRef.current += chunk.toString();
       });
 
       child.on("exit", (code) => {
@@ -189,7 +194,15 @@ const App: React.FC = () => {
   }
 
   if (!state && pythonExited) {
-    return <Text color="red"> Python process exited (code {exitCode}) without sending telemetry. Run manually to see errors:{"\n"}  uv run python scripts/run_simulation.py</Text>;
+    const stderr = stderrRef.current.trim();
+    const lastLines = stderr ? stderr.split("\n").slice(-15).join("\n") : "";
+    return (
+      <Box flexDirection="column">
+        <Text color="red"> Python process exited (code {exitCode}) without sending telemetry.</Text>
+        {lastLines ? <Text color="red">{lastLines}</Text> : null}
+        <Text dimColor> Run manually: uv run python scripts/run_simulation.py</Text>
+      </Box>
+    );
   }
 
   if (!state) {

@@ -1,0 +1,71 @@
+"""Builders et validateurs partagés par les adaptateurs sync/async."""
+
+from __future__ import annotations
+
+from milpo.schemas import ClassifierDecision
+
+
+def build_descriptor_messages(
+    media_urls: list[str],
+    media_types: list[str],
+    caption: str | None,
+    instructions: str,
+    descriptions_taxonomiques: str,
+) -> list[dict]:
+    """Construit les messages pour le descripteur multimodal."""
+    system = (
+        f"{instructions}\n\n"
+        f"## Critères discriminants à observer\n\n"
+        f"{descriptions_taxonomiques}"
+    )
+
+    content: list[dict] = []
+    for url, media_type in zip(media_urls, media_types):
+        if media_type == "VIDEO":
+            content.append({"type": "video_url", "video_url": {"url": url}})
+        else:
+            content.append({"type": "image_url", "image_url": {"url": url}})
+
+    content.append({
+        "type": "text",
+        "text": f"Caption du post :\n{caption or '(pas de caption)'}",
+    })
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": content},
+    ]
+
+
+def parse_classifier_arguments(arguments: str, axis: str, labels: list[str]) -> tuple[str, str]:
+    """Parse et valide les arguments d'un tool_call de classifieur."""
+    parsed = ClassifierDecision.model_validate_json(arguments)
+    if parsed.label not in labels:
+        raise RuntimeError(f"Classifier {axis}: label invalide '{parsed.label}' (hors enum)")
+    return parsed.label, parsed.confidence
+
+
+def build_classifier_messages(
+    features_json: str,
+    caption: str | None,
+    instructions: str,
+    descriptions_taxonomiques: str,
+) -> list[dict]:
+    """Construit les messages pour un classifieur text-only."""
+    system = (
+        f"{instructions}\n\n"
+        f"## Descriptions des labels\n\n"
+        f"{descriptions_taxonomiques}"
+    )
+
+    user_text = (
+        f"## Features extraites du post\n\n"
+        f"```json\n{features_json}\n```\n\n"
+        f"## Caption du post\n\n"
+        f"{caption or '(pas de caption)'}"
+    )
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_text},
+    ]

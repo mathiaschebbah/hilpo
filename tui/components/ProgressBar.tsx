@@ -17,7 +17,7 @@ function fmtTokens(n: number): string {
 export const ProgressBar: React.FC<{ state: TelemetryState }> = ({ state }) => {
   const { cursor, total, rate, elapsedSec, etaSec, costUsd, inputTokens, outputTokens } = state;
   const pct = total > 0 ? Math.round((cursor / total) * 100) : 0;
-  const width = Math.max(process.stdout.columns - 8, 40);
+  const width = Math.max((process.stdout.columns ?? 80) - 8, 40);
   const barWidth = Math.min(30, width - 30);
   const filled = total > 0 ? Math.round((cursor / total) * barWidth) : 0;
   const bar = "\u2588".repeat(filled) + "\u2591".repeat(barWidth - filled);
@@ -31,7 +31,7 @@ export const ProgressBar: React.FC<{ state: TelemetryState }> = ({ state }) => {
       </Text>
       <Text>
         {" "}Elapsed <Text bold>{fmtTime(elapsedSec)}</Text>
-        {"    "}ETA <Text bold>{fmtTime(etaSec)}</Text>
+        {"    "}ETA <Text bold>{etaSec !== null ? fmtTime(etaSec) : "..."}</Text>
         {"    "}cost <Text color="yellow">${costUsd.toFixed(2)}</Text>
         {"    "}{fmtTokens(inputTokens)} in / {fmtTokens(outputTokens)} out
       </Text>

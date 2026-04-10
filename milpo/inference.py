@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -11,8 +10,13 @@ from openai import OpenAI
 from milpo.agent import call_classifier, call_descriptor
 from milpo.client import get_client
 from milpo.config import MODEL_CLASSIFIER
+from milpo.inference_core import (
+    build_classifier_specs,
+    build_post_prediction,
+    features_to_json,
+)
 from milpo.router import route
-from milpo.schemas import DescriptorFeatures, PostPrediction
+from milpo.schemas import PostPrediction
 
 
 @dataclass
@@ -23,10 +27,10 @@ class PromptSet:
     category_instructions: str
     visual_format_instructions: str
     strategy_instructions: str
-    descriptor_descriptions: str  # Δ^m descripteur (critères discriminants)
-    category_descriptions: str    # Δ^m catégories (15 descriptions)
-    visual_format_descriptions: str  # Δ^m formats visuels scopés
-    strategy_descriptions: str    # Δ^m stratégies (2 descriptions)
+    descriptor_descriptions: str
+    category_descriptions: str
+    visual_format_descriptions: str
+    strategy_descriptions: str
 
 
 @dataclass
@@ -34,9 +38,9 @@ class PostInput:
     """Données d'entrée pour classifier un post."""
 
     ig_media_id: int
-    media_product_type: str  # FEED ou REELS
-    media_urls: list[str]    # URLs signées GCS
-    media_types: list[str]   # IMAGE ou VIDEO pour chaque média
+    media_product_type: str
+    media_urls: list[str]
+    media_types: list[str]
     caption: str | None
 
 
@@ -60,15 +64,15 @@ class PipelineResult:
 
     @property
     def total_input_tokens(self) -> int:
-        return sum(c.input_tokens for c in self.api_calls)
+        return sum(call.input_tokens for call in self.api_calls)
 
     @property
     def total_output_tokens(self) -> int:
-        return sum(c.output_tokens for c in self.api_calls)
+        return sum(call.output_tokens for call in self.api_calls)
 
     @property
     def total_latency_ms(self) -> int:
-        return sum(c.latency_ms for c in self.api_calls)
+        return sum(call.latency_ms for call in self.api_calls)
 
 
 def classify_post(
@@ -79,21 +83,12 @@ def classify_post(
     strategy_labels: list[str],
     client: OpenAI | None = None,
 ) -> PipelineResult:
-    """Exécute le pipeline complet pour un post.
-
-    1. Routage déterministe
-    2. Descripteur multimodal (1 appel)
-    3. 3 classifieurs text-only en parallèle
-    """
+    """Exécute le pipeline complet pour un post."""
     if client is None:
         client = get_client()
 
     api_calls: list[ApiCallLog] = []
-
-    # ── 1. Routage ──
     routing = route(post.media_product_type)
-
-    # ── 2. Descripteur multimodal ──
     features, desc_usage = call_descriptor(
         client=client,
         model=routing["model_descriptor"],
@@ -111,21 +106,18 @@ def classify_post(
         latency_ms=desc_usage["latency_ms"],
     ))
 
-    features_json = features.model_dump_json(indent=2)
-
-    # ── 3. Classifieurs text-only en parallèle ──
-    classifiers = {
-        "category": (category_labels, prompts.category_instructions, prompts.category_descriptions),
-        "visual_format": (visual_format_labels, prompts.visual_format_instructions, prompts.visual_format_descriptions),
-        "strategy": (strategy_labels, prompts.strategy_instructions, prompts.strategy_descriptions),
-    }
-
+    classifiers = build_classifier_specs(
+        prompts,
+        category_labels,
+        visual_format_labels,
+        strategy_labels,
+    )
+    features_json = features_to_json(features)
     results: dict[str, tuple[str, str]] = {}
 
     with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {}
-        for axis, (labels, instructions, descriptions) in classifiers.items():
-            future = pool.submit(
+        futures = {
+            pool.submit(
                 call_classifier,
                 client=client,
                 model=MODEL_CLASSIFIER,
@@ -135,8 +127,9 @@ def classify_post(
                 caption=post.caption,
                 instructions=instructions,
                 descriptions_taxonomiques=descriptions,
-            )
-            futures[future] = axis
+            ): axis
+            for axis, (labels, instructions, descriptions) in classifiers.items()
+        }
 
         for future in as_completed(futures):
             axis = futures[future]
@@ -150,13 +143,9 @@ def classify_post(
                 latency_ms=clf_usage["latency_ms"],
             ))
 
-    # ── Assemblage ──
-    prediction = PostPrediction(
+    prediction = build_post_prediction(
         ig_media_id=post.ig_media_id,
-        category=results["category"][0],
-        visual_format=results["visual_format"][0],
-        strategy=results["strategy"][0],
         features=features,
+        labels_by_axis={axis: result[0] for axis, result in results.items()},
     )
-
     return PipelineResult(prediction=prediction, api_calls=api_calls)

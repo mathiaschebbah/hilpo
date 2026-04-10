@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Box, Text } from "ink";
 import type { TelemetryState } from "../types.js";
 import { ProgressBar } from "./ProgressBar.js";
@@ -47,19 +47,42 @@ const StatusIndicator: React.FC<{ state: TelemetryState }> = ({ state }) => {
 };
 
 export const Dashboard: React.FC<{ state: TelemetryState; done: boolean }> = ({ state, done }) => {
+  const [, setTick] = useState(0);
+  const stateReceivedAt = useRef(Date.now());
+  const prevState = useRef(state);
+
+  if (prevState.current !== state) {
+    stateReceivedAt.current = Date.now();
+    prevState.current = state;
+  }
+
+  useEffect(() => {
+    if (done) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [done]);
+
+  const sinceLastState = Math.floor((Date.now() - stateReceivedAt.current) / 1000);
+  const localState: TelemetryState = {
+    ...state,
+    elapsedSec: state.elapsedSec + sinceLastState,
+    lastActivitySec: state.lastActivitySec + sinceLastState,
+    etaSec: state.etaSec !== null ? Math.max(0, state.etaSec - sinceLastState) : null,
+  };
+
   const title = done
-    ? ` MILPO Simulation \u2014 run #${state.runId} \u2014 DONE`
-    : ` MILPO Simulation \u2014 run #${state.runId}`;
+    ? ` MILPO Simulation \u2014 run #${localState.runId} \u2014 DONE`
+    : ` MILPO Simulation \u2014 run #${localState.runId}`;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={done ? "green" : "blue"} paddingX={1}>
       <Text bold color={done ? "green" : "blue"}>{title}</Text>
       <Text>{""}</Text>
-      <ProgressBar state={state} />
+      <ProgressBar state={localState} />
       <Text dimColor>{" "}{"\u2500".repeat(52)}</Text>
-      <AccuracyPanel state={state} />
-      <StatusIndicator state={state} />
-      <EventLog events={state.events} />
+      <AccuracyPanel state={localState} />
+      <StatusIndicator state={localState} />
+      <EventLog events={localState.events} />
     </Box>
   );
 };
