@@ -157,11 +157,13 @@ Architecture : DSPy est utilisé **uniquement comme générateur de strings d'in
 
 **Statut** : protocole et code en place. Runs en attente — l'extension du dev split annoté (actuellement 237 posts, idéalement 400-500+) conditionne la robustesse statistique des résultats DSPy.
 
-### Comparaison empirique avec pipeline agentique A0 (agents/)
+### Comparaison empirique avec pipeline agentique A0 puis A1 bounded (agents/)
 
 **Pourquoi une approche agentique.** La pipeline classique (B0, MILPO, DSPy) est un pipeline fixe : descripteur → 3 classifieurs en parallèle, chaque étape avec un prompt hardcodé. L'approche agentique pose la question inverse : que se passe-t-il si un agent autonome construit son propre contexte via des tools de perception avant de classifier ? L'agent peut itérer (poser des questions ciblées au descripteur, récupérer des exemples annotés), adapter sa stratégie par post, et consulter un modèle plus intelligent (advisor) quand il hésite.
 
 **Architecture A0.** Haiku 4.5 (executor) classifie séquentiellement category → visual_format → strategy dans une conversation multi-tours unique. L'advisor Opus 4.6 est disponible comme tool natif Anthropic (beta `advisor-tool-2026-03-01`). Haiku décide seul quand l'invoquer (hésitation entre 2+ labels proches).
+
+**Architecture A1 bounded.** L'architecture reste agentique, mais le runtime est borné pour le débit réel : 1 conversation par post, 1 soumission finale multi-axes, 2 tours executor maximum, advisor toujours disponible mais limité à 1 usage, tools client exécutés en parallèle, préfetch opportuniste du descripteur, et observabilité fine via `agent_traces` enrichi + `llm_request_events`. A0 reste disponible uniquement comme rollback temporaire (`--pipeline-mode legacy`), le mode par défaut devenant `--pipeline-mode bounded`.
 
 4 tools de perception + 1 tool de sortie :
 
