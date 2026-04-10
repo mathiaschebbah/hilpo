@@ -341,7 +341,7 @@ def classify_post_agentic(
     t0_post = time.monotonic()
     all_trace: list[TraceEvent] = []
 
-    log.info("  phase category...")
+    log.debug("  phase category...")
     cat, calls, trace, adv, tc = _run_agent_phase(
         client, system, messages, tools_cat, media_ctx, conn, "category", tool_prompts,
     )
@@ -349,7 +349,7 @@ def classify_post_agentic(
     all_trace.extend(trace)
     total_advisor += adv
     total_tools += tc
-    log.info("  → category=%s (%s) [%d tools, %d advisor]", cat.label, cat.confidence, tc, adv)
+    log.debug("  → category=%s (%s) [%d tools, %d advisor]", cat.label, cat.confidence, tc, adv)
 
     # ── Phase 2 : Visual Format ───────────────────────────────────
 
@@ -365,7 +365,7 @@ def classify_post_agentic(
         ),
     })
 
-    log.info("  phase visual_format...")
+    log.debug("  phase visual_format...")
     vf, calls, trace, adv, tc = _run_agent_phase(
         client, system, messages, tools_vf, media_ctx, conn, "visual_format", tool_prompts,
     )
@@ -373,7 +373,7 @@ def classify_post_agentic(
     all_trace.extend(trace)
     total_advisor += adv
     total_tools += tc
-    log.info("  → visual_format=%s (%s) [%d tools, %d advisor]", vf.label, vf.confidence, tc, adv)
+    log.debug("  → visual_format=%s (%s) [%d tools, %d advisor]", vf.label, vf.confidence, tc, adv)
 
     # ── Phase 3 : Strategy ────────────────────────────────────────
 
@@ -388,7 +388,7 @@ def classify_post_agentic(
         ),
     })
 
-    log.info("  phase strategy...")
+    log.debug("  phase strategy...")
     strat, calls, trace, adv, tc = _run_agent_phase(
         client, system, messages, tools_strat, media_ctx, conn, "strategy", tool_prompts,
     )
@@ -396,7 +396,7 @@ def classify_post_agentic(
     all_trace.extend(trace)
     total_advisor += adv
     total_tools += tc
-    log.info("  → strategy=%s (%s) [%d tools, %d advisor]", strat.label, strat.confidence, tc, adv)
+    log.debug("  → strategy=%s (%s) [%d tools, %d advisor]", strat.label, strat.confidence, tc, adv)
 
     total_latency = int((time.monotonic() - t0_post) * 1000)
 

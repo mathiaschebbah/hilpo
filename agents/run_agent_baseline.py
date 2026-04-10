@@ -265,10 +265,10 @@ def main():
     vf_feed_desc = format_descriptions(load_visual_formats(conn, "FEED"))
     vf_reels_desc = format_descriptions(load_visual_formats(conn, "REELS"))
 
-    # 5. Classification parallèle (10 posts concurrents)
+    # 5. Classification parallèle
     max_workers = args.workers
-    log.info("Classification en cours (%d workers parallèles)...", max_workers)
-    log.info("")
+    total = len(raw_posts)
+    log.info("Classification en cours (%d workers)...", max_workers)
 
     matches_total = {"category": 0, "visual_format": 0, "strategy": 0}
     total_api_calls = 0
@@ -278,6 +278,27 @@ def main():
     done_count = 0
     lock = threading.Lock()
 
+    def _progress_bar():
+        elapsed = time.monotonic() - t0
+        rate = done_count / elapsed if elapsed > 0 else 0
+        remaining = total - done_count
+        eta = remaining / rate if rate > 0 else 0
+        pct = done_count * 100 // total if total else 0
+        filled = done_count * 30 // total if total else 0
+        bar = "█" * filled + "░" * (30 - filled)
+        ok = done_count - errors
+        acc_cat = matches_total["category"] / ok * 100 if ok else 0
+        acc_vf = matches_total["visual_format"] / ok * 100 if ok else 0
+        acc_str = matches_total["strategy"] / ok * 100 if ok else 0
+        print(
+            f"\r  {bar} {done_count:>3}/{total} ({pct:>2}%) "
+            f"| {rate:.2f} posts/s "
+            f"| ETA {eta:.0f}s "
+            f"| err {errors} "
+            f"| cat {acc_cat:.0f}% vf {acc_vf:.0f}% str {acc_str:.0f}%",
+            end="", flush=True,
+        )
+
     def _classify_one(idx: int, post: dict) -> tuple[int, dict, AgentResult | None]:
         """Classifie un post dans un thread dédié (connexion BDD propre)."""
         mid = post["ig_media_id"]
@@ -285,7 +306,6 @@ def main():
         signed = signed_by_post.get(mid, [])
 
         if not signed:
-            log.warning("  [%d/%d] %s — pas de médias signés, skip", idx, len(raw_posts), mid)
             return idx, post, None
 
         media_urls = [u for u, _ in signed]
@@ -303,13 +323,12 @@ def main():
             descriptor_descriptions=vf_desc,
         )
 
-        # Connexion BDD dédiée par thread (psycopg n'est pas thread-safe)
         thread_conn = get_conn()
         try:
             result = classify_post_agentic(mid, media_ctx, thread_conn)
             return idx, post, result
         except Exception as exc:
-            log.error("  [%d/%d] %s ERREUR: %s", idx, len(raw_posts), mid, exc)
+            log.error("  [%d/%d] %s ERREUR: %s", idx, total, mid, exc)
             return idx, post, None
         finally:
             thread_conn.close()
@@ -329,14 +348,16 @@ def main():
 
                 if result is None:
                     errors += 1
+                    _progress_bar()
                     continue
 
                 try:
                     post_matches = store_agent_results(conn, result, run_id)
                 except Exception as exc:
-                    log.error("  [%d/%d] %s store error: %s", idx, len(raw_posts), mid, exc)
+                    log.error("  store error %s: %s", mid, exc)
                     conn.rollback()
                     errors += 1
+                    _progress_bar()
                     continue
 
                 for axis in ("category", "visual_format", "strategy"):
@@ -346,18 +367,9 @@ def main():
                 total_api_calls += len(result.api_calls)
                 total_advisor_calls += result.advisor_calls
                 total_tool_calls += result.tool_calls
+                _progress_bar()
 
-                match_str = " ".join(
-                    f"{'✓' if post_matches[a] else '✗'}{a[0].upper()}"
-                    for a in ("category", "visual_format", "strategy")
-                )
-                log.info("  [%d/%d] %s | %s | cat=%s vf=%s strat=%s | tools=%d adv=%d",
-                         done_count, len(raw_posts), mid, match_str,
-                         result.category.label,
-                         result.visual_format.label,
-                         result.strategy.label,
-                         result.tool_calls,
-                         result.advisor_calls)
+    print()  # newline après la barre
 
     # 6. Métriques
     n = len(raw_posts) - errors
