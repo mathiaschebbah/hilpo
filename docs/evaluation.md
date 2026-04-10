@@ -157,6 +157,47 @@ Architecture : DSPy est utilisé **uniquement comme générateur de strings d'in
 
 **Statut** : protocole et code en place. Runs en attente — l'extension du dev split annoté (actuellement 237 posts, idéalement 400-500+) conditionne la robustesse statistique des résultats DSPy.
 
+### Comparaison empirique avec pipeline agentique A0 (agents/)
+
+**Pourquoi une approche agentique.** La pipeline classique (B0, MILPO, DSPy) est un pipeline fixe : descripteur → 3 classifieurs en parallèle, chaque étape avec un prompt hardcodé. L'approche agentique pose la question inverse : que se passe-t-il si un agent autonome construit son propre contexte via des tools de perception avant de classifier ? L'agent peut itérer (poser des questions ciblées au descripteur, récupérer des exemples annotés), adapter sa stratégie par post, et consulter un modèle plus intelligent (advisor) quand il hésite.
+
+**Architecture A0.** Haiku 4.5 (executor) classifie séquentiellement category → visual_format → strategy dans une conversation multi-tours unique. L'advisor Opus 4.6 est disponible comme tool natif Anthropic (beta `advisor-tool-2026-03-01`). Haiku décide seul quand l'invoquer (hésitation entre 2+ labels proches).
+
+4 tools de perception + 1 tool de sortie :
+
+| Tool | Rôle | Backend |
+|---|---|---|
+| `describe_media` | Perception visuelle/audio du post. Mode structuré (JSON features, identique B0) ou mode focus (question libre au descripteur) | Gemini 3 Flash Preview via OpenRouter |
+| `get_taxonomy` | Descriptions taxonomiques par axe, filtrées par scope | BDD locale |
+| `get_examples` | Few-shot dynamique : exemples annotés du dev set, filtre année | BDD locale |
+| `advisor` | Guidance stratégique d'Opus quand Haiku hésite | Anthropic natif (server-side) |
+| `submit_classification` | Structured output : label (enum stricte par axe/scope) + confidence + reasoning | `strict: true`, garanti par Anthropic |
+
+**Routage déterministe.** Le scope FEED/REELS est déterminé par `media_product_type` côté code, pas par l'agent. Les taxonomies, exemples et labels enum sont filtrés par scope avant d'être présentés à l'agent.
+
+**Prompts versionnés.** 5 prompts en BDD (agent='agent_executor', migrations 012-013), optimisables avec la même infrastructure que les prompts classiques. Le descripteur structuré réutilise les prompts existants (descriptor/FEED id=7, descriptor/REELS id=8).
+
+**Traces.** Table `agent_traces` (migration 011) : 1 row par post avec trace structurée JSONB (séquence tool_call / advisor_call / classification), métriques tokens par composant (executor, advisor, descriptor), classifications + confidence.
+
+#### Tableau de comparaison A0 vs B0 (à compléter après le run)
+
+| Run | Architecture | Catégorie | Visual_format | Stratégie | Coût | Notes |
+|---|---|---|---|---|---|---|
+| **B0** (run id=7) | Pipeline fixe (Gemini + 3× Qwen) | **86,7%** | **65,4%** | **94,5%** | $2,68 | Référence |
+| **A0** | Agent Haiku + Opus advisor + tools | ?? | ?? | ?? | ~$15-35 | Approche agentique, few-shot dynamique, CoT explicite |
+
+#### Lectures attendues
+
+1. **A0 vs B0 accuracy** : l'approche agentique (CoT + few-shot dynamique + advisor) améliore-t-elle la classification par rapport à la pipeline fixe ? Cible : 90% overall.
+
+2. **A0 coût vs B0 coût** : le ratio qualité/coût est-il défendable ? B0 coûte $2,68 ; A0 devrait coûter 5-15× plus cher. Le surcoût est-il justifié par le gain de précision ?
+
+3. **Corrélation advisor ↔ difficulté** : sur quels posts Haiku appelle-t-il l'advisor ? Corrélation avec la confidence, les formats rares, les erreurs de B0 ?
+
+4. **Analyse qualitative du CoT** : le raisonnement de l'agent révèle-t-il des stratégies de classification différentes de la pipeline fixe ? L'agent identifie-t-il des ambiguïtés que les classifieurs ignorent ?
+
+**Statut** : code en place (`agents/`), run sur le test set en attente.
+
 ### Contexte de la boucle ProTeGi — format des batches d'erreurs
 
 Quand la boucle ProTeGi se déclenche (30 erreurs accumulées sur la cible la plus erronée), trois LLMs distincts sont appelés en chaîne (`milpo/rewriter.py`).
