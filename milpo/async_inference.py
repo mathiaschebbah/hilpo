@@ -14,7 +14,7 @@ from milpo.agent_common import (
     build_descriptor_messages,
     parse_classifier_arguments,
 )
-from milpo.config import MODEL_CLASSIFIER, OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from milpo.config import LLM_API_KEY, LLM_BASE_URL, MODEL_CLASSIFIER
 from milpo.inference import ApiCallLog, PipelineResult, PostInput, PromptSet
 from milpo.inference_core import (
     build_classifier_specs,
@@ -36,11 +36,11 @@ def set_api_call_hook(hook):
 
 
 def get_async_client() -> AsyncOpenAI:
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY non définie.")
+    if not LLM_API_KEY:
+        raise RuntimeError("Aucune clé API configurée (GOOGLE_API_KEY ou OPENROUTER_API_KEY).")
     return AsyncOpenAI(
-        base_url=OPENROUTER_BASE_URL,
-        api_key=OPENROUTER_API_KEY,
+        base_url=LLM_BASE_URL,
+        api_key=LLM_API_KEY,
         timeout=20.0,
     )
 

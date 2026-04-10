@@ -12,21 +12,27 @@ for _env_path in [_project_root / ".env", _project_root / "apps" / "backend" / "
         load_dotenv(_env_path)
         break
 
-# OpenRouter
-OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# LLM Provider — Google AI direct (Gemini) ou OpenRouter (fallback)
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Modèles
-#
-# Descripteurs : Gemini 3.1 Flash Lite — analyse textuelle libre (plus de JSON structuré).
-MODEL_DESCRIPTOR_FEED = "google/gemini-3.1-flash-lite-preview"
-MODEL_DESCRIPTOR_REELS = "google/gemini-3.1-flash-lite-preview"
+if GOOGLE_API_KEY:
+    LLM_API_KEY = GOOGLE_API_KEY
+    LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+else:
+    LLM_API_KEY = OPENROUTER_API_KEY
+    LLM_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Classifieurs : Qwen 3.5 Flash text-only via tool calling forcé
-# (cf. commit 0b3bd8b — fix après bug json_schema strict sur enums binaires).
-MODEL_CLASSIFIER = "qwen/qwen3.5-flash-02-23"
+# Modèles — tout sur Gemini 2.5 Flash Lite
+MODEL_DESCRIPTOR_FEED = os.environ.get("MILPO_MODEL_DESCRIPTOR", "gemini-3.1-flash-lite")
+MODEL_DESCRIPTOR_REELS = os.environ.get("MILPO_MODEL_DESCRIPTOR", "gemini-3.1-flash-lite")
+MODEL_CLASSIFIER = os.environ.get("MILPO_MODEL_CLASSIFIER", "gemini-3.1-flash-lite")
 
 MODEL_REWRITER = os.environ.get("HILPO_MODEL_REWRITER", "openai/gpt-5.4")
+
+# Le rewriter utilise OpenRouter (GPT-5.4) même quand le pipeline principal est sur Google
+REWRITER_API_KEY = OPENROUTER_API_KEY
+REWRITER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Modèles pour la boucle ProTeGi (mode --mode protegi).
 # Par défaut tous = MODEL_REWRITER pour isoler l'effet de la décomposition

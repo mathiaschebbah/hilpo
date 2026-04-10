@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from milpo.config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from milpo.config import LLM_API_KEY, LLM_BASE_URL
 from milpo.db import (
     format_descriptions,
     get_active_prompt,
@@ -332,7 +332,7 @@ def _get_openrouter_client() -> OpenAI:
     if _openrouter_client is None:
         with _openrouter_client_lock:
             if _openrouter_client is None:
-                _openrouter_client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
+                _openrouter_client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
     return _openrouter_client
 
 

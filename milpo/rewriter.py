@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from openai import OpenAI
 
-from milpo.client import get_client
+from milpo.client import get_rewriter_client
 from milpo.config import MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER
 from milpo.errors import LLMCallError
 from milpo.schemas import (
@@ -404,7 +404,7 @@ def compute_textual_gradient(
     if not errors:
         raise ValueError("compute_textual_gradient: errors vide")
     if client is None:
-        client = get_client()
+        client = get_rewriter_client()
 
     system = CRITIC_SYSTEM.format(m=m)
     user = _critic_user_content(
@@ -473,7 +473,7 @@ def apply_gradient_edit(
     if c < 1:
         raise ValueError("apply_gradient_edit: c doit être >= 1")
     if client is None:
-        client = get_client()
+        client = get_rewriter_client()
 
     system = EDITOR_SYSTEM.format(c=c)
     user = _editor_user_content(
@@ -546,7 +546,7 @@ def paraphrase_candidate(
             latency_ms=0,
         )
     if client is None:
-        client = get_client()
+        client = get_rewriter_client()
 
     system = PARAPHRASER_SYSTEM.format(p=p)
     user = (
@@ -620,7 +620,7 @@ def protegi_step(
         ils servent de base aux paraphrases).
     """
     if client is None:
-        client = get_client()
+        client = get_rewriter_client()
 
     log.info(
         "[PROTEGI] step %s/%s — m=%d c=%d p=%d (critic=%s editor=%s paraphraser=%s)",
