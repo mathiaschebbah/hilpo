@@ -324,6 +324,30 @@ async def async_classify_with_features(
     return PipelineResult(prediction=prediction, api_calls=api_calls)
 
 
+async def async_classify_target_only(
+    post: PostInput,
+    features: DescriptorFeatures,
+    target_axis: str,
+    target_labels: list[str],
+    target_instructions: str,
+    target_descriptions: str,
+    client: AsyncOpenAI,
+    semaphore: asyncio.Semaphore,
+) -> tuple[str, ApiCallLog]:
+    """Classifie un seul axe cible — pour les bras candidats du bandit ProTeGi.
+
+    Retourne (label_prédit, api_call_log) sans construire un PipelineResult
+    complet (les axes non-cible ne sont pas classifiés).
+    """
+    features_json = features.model_dump_json(indent=2)
+    label, _confidence, clf_log = await async_call_classifier(
+        client, MODEL_CLASSIFIER, target_axis, target_labels,
+        features_json, post.caption, target_instructions, target_descriptions,
+        semaphore,
+    )
+    return label, clf_log
+
+
 async def async_classify_batch(
     posts: list[PostInput],
     prompts_by_scope: dict[str, PromptSet],

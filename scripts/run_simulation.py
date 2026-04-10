@@ -37,6 +37,7 @@ from rich.live import Live
 from milpo.async_inference import (
     async_call_descriptor,
     async_classify_batch,
+    async_classify_target_only,
     async_classify_with_features,
     get_async_client,
 )
@@ -203,7 +204,7 @@ def fail_run(conn, run_id: int, error_message: str, metrics: dict):
             final_accuracy_strategy = %s,
             prompt_iterations = %s,
             total_api_calls = %s, total_cost_usd = %s,
-            config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('failure_reason', %s)
+            config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('failure_reason', %s::text)
         WHERE id = %s
         """,
         (
@@ -213,7 +214,7 @@ def fail_run(conn, run_id: int, error_message: str, metrics: dict):
             metrics["prompt_iterations"],
             metrics["total_api_calls"],
             metrics.get("total_cost_usd"),
-            error_message[:1000],
+            error_message[:1000] or "unknown error",
             run_id,
         ),
     )
@@ -710,7 +711,11 @@ async def async_multi_evaluate(
         features_by_id[post_id] = (features, desc_log)
 
     # ── Phase 2 : classifier avec features pré-calculées ──
-    # Mismatch : incumbent seul, pipeline complet avec features
+    # Résoudre les labels/instructions cible pour les candidats
+    _target_scope_for_labels = target_scope or "FEED"
+    target_labels_list = labels_by_scope[_target_scope_for_labels][target_agent]
+
+    # Mismatch : incumbent seul, pipeline complet (3 classifieurs)
     async def classify_mismatch(offset: int, post: PostInput, annotation: dict):
         if post.ig_media_id not in features_by_id:
             return None
@@ -723,29 +728,57 @@ async def async_multi_evaluate(
             labels["category"], labels["visual_format"], labels["strategy"],
             client, semaphore,
         )
-        return (offset, post, annotation, incumbent_arm_id, result, True)
+        return (offset, post, annotation, incumbent_arm_id, result, True, False)
 
-    # Normal : tous les bras, classifieurs seuls (features partagées)
-    async def classify_normal(offset: int, post: PostInput, annotation: dict, arm_id: int):
+    # Normal-incumbent : pipeline complet (3 classifieurs, pour métriques globales)
+    async def classify_incumbent(offset: int, post: PostInput, annotation: dict):
         if post.ig_media_id not in features_by_id:
             return None
         features, desc_log = features_by_id[post.ig_media_id]
         scope = post.media_product_type
         labels = labels_by_scope[scope]
-        prompts = prompts_cache[(arm_id, scope)]
+        prompts = prompts_cache[(incumbent_arm_id, scope)]
         result = await async_classify_with_features(
             post, features, desc_log, prompts,
             labels["category"], labels["visual_format"], labels["strategy"],
             client, semaphore,
         )
-        return (offset, post, annotation, arm_id, result, False)
+        return (offset, post, annotation, incumbent_arm_id, result, False, False)
+
+    # Normal-candidat : UN SEUL classifieur (l'axe cible)
+    async def classify_candidate(offset: int, post: PostInput, annotation: dict, arm_id: int):
+        if post.ig_media_id not in features_by_id:
+            return None
+        features, _ = features_by_id[post.ig_media_id]
+        scope = post.media_product_type
+        prompts = prompts_cache[(arm_id, scope)]
+        # Résoudre les instructions/descriptions de l'axe cible pour ce bras
+        target_instr = {
+            "category": prompts.category_instructions,
+            "visual_format": prompts.visual_format_instructions,
+            "strategy": prompts.strategy_instructions,
+        }[target_agent]
+        target_desc = {
+            "category": prompts.category_descriptions,
+            "visual_format": prompts.visual_format_descriptions,
+            "strategy": prompts.strategy_descriptions,
+        }[target_agent]
+        label, clf_log = await async_classify_target_only(
+            post, features, target_agent, target_labels_list,
+            target_instr, target_desc, client, semaphore,
+        )
+        # Retourner le label cible + api_call (pas un PipelineResult complet)
+        return (offset, post, annotation, arm_id, label, clf_log, True)  # True = target_only
 
     tasks = []
     for offset, post, annotation in mismatch_posts:
         tasks.append(classify_mismatch(offset, post, annotation))
     for offset, post, annotation in normal_posts:
+        tasks.append(classify_incumbent(offset, post, annotation))
         for arm_id in arms:
-            tasks.append(classify_normal(offset, post, annotation, arm_id))
+            if arm_id == incumbent_arm_id:
+                continue  # déjà traité par classify_incumbent
+            tasks.append(classify_candidate(offset, post, annotation, arm_id))
 
     eval_done = 0
     eval_total = len(tasks) + len(all_posts)  # descripteurs + classifieurs
@@ -766,68 +799,68 @@ async def async_multi_evaluate(
     results = await asyncio.gather(*[_track(t) for t in tasks], return_exceptions=True)
 
     # ── 3. Post-traitement séquentiel (stockage BDD + agrégation matches) ──
-    # Grouper par (offset, post) pour traitement cohérent
+    # Deux formats de résultats :
+    #   incumbent/mismatch : (offset, post, ann, arm_id, PipelineResult, is_mismatch, False)
+    #   candidat target_only : (offset, post, ann, arm_id, label_str, clf_log, True)
     results_by_offset: dict[int, list] = defaultdict(list)
     for r in results:
         if isinstance(r, Exception):
             log.warning("Classification échouée dans multi_evaluate: %s", r)
             continue
-        offset, post, annotation, arm_id, result, is_mismatch = r
-        results_by_offset[offset].append((post, annotation, arm_id, result, is_mismatch))
+        if r is None:
+            continue
+        results_by_offset[r[0]].append(r)
 
-    # Trier par offset pour maintenir l'ordre
     for offset in sorted(results_by_offset.keys()):
         items = results_by_offset[offset]
         if not items:
             continue
 
-        post, annotation, _, _, is_mismatch = items[0]
+        post = items[0][1]
+        annotation = items[0][2]
         scope = post.media_product_type
-        labels = labels_by_scope[scope]
 
-        if is_mismatch:
-            # Cas mismatch : un seul résultat (incumbent), propager à tous les bras
-            _, _, arm_id, result, _ = items[0]
-            metric_matches = _target_metric_matches(result, annotation, target_agent)
-            for aid in arms:
-                matches_by_arm[aid].extend(metric_matches)
+        for item in items:
+            arm_id = item[3]
+            is_target_only = item[6]
 
-            # Persister incumbent
-            inc_state = arm_states[incumbent_arm_id]
-            for axis in ("category", "visual_format", "strategy"):
-                scope_key = scope if axis in ("visual_format", "descriptor") else None
-                pid = (
-                    inc_state.db_ids.get((axis, scope_key))
-                    or inc_state.db_ids.get((axis, None))
+            if is_target_only:
+                # Candidat : un seul label cible (pas de PipelineResult)
+                label = item[4]
+                clf_log = item[5]
+                is_match = label == annotation[target_agent]
+                matches_by_arm[arm_id].append(is_match)
+
+                state = arm_states[arm_id]
+                store_api_call(
+                    conn, "evaluation", target_agent, clf_log.model,
+                    state.db_ids.get((target_agent, target_scope)),
+                    post.ig_media_id,
+                    clf_log.input_tokens, clf_log.output_tokens,
+                    None, clf_log.latency_ms, run_id,
                 )
                 store_prediction(
-                    conn, post.ig_media_id, axis, pid,
-                    getattr(result.prediction, axis),
+                    conn, post.ig_media_id, target_agent,
+                    state.db_ids.get((target_agent, target_scope)),
+                    label,
                     simulation_run_id=run_id,
                 )
-                incumbent_records.append(MatchRecord(
-                    axis=axis,
-                    match=getattr(result.prediction, axis) == annotation[axis],
-                    cursor=start_cursor + offset,
-                    scope=scope,
-                ))
-            for call in result.api_calls:
-                scope_key = scope if call.agent in ("descriptor", "visual_format") else None
-                pid = (
-                    inc_state.db_ids.get((call.agent, scope_key))
-                    or inc_state.db_ids.get((call.agent, None))
-                )
-                store_api_call(
-                    conn, "evaluation", call.agent, call.model, pid,
-                    post.ig_media_id, call.input_tokens, call.output_tokens,
-                    None, call.latency_ms, run_id,
-                )
-        else:
-            # Cas normal : un résultat par bras
-            for _, _, arm_id, result, _ in items:
-                metric_matches = _target_metric_matches(result, annotation, target_agent)
-                matches_by_arm[arm_id].extend(metric_matches)
+            else:
+                # Incumbent ou mismatch : PipelineResult complet
+                result = item[4]
+                is_mismatch = item[5]
 
+                if is_mismatch:
+                    # Mismatch : propager les mêmes matches à TOUS les bras
+                    metric_matches = _target_metric_matches(result, annotation, target_agent)
+                    for aid in arms:
+                        matches_by_arm[aid].extend(metric_matches)
+                else:
+                    # Incumbent normal
+                    metric_matches = _target_metric_matches(result, annotation, target_agent)
+                    matches_by_arm[arm_id].extend(metric_matches)
+
+                # Persister les 3 axes + api_calls (incumbent)
                 state = arm_states[arm_id]
                 for call in result.api_calls:
                     scope_key = scope if call.agent in ("descriptor", "visual_format") else None
@@ -840,34 +873,23 @@ async def async_multi_evaluate(
                         post.ig_media_id, call.input_tokens, call.output_tokens,
                         None, call.latency_ms, run_id,
                     )
-
-                if arm_id == incumbent_arm_id:
-                    for axis in ("category", "visual_format", "strategy"):
-                        scope_key = scope if axis in ("visual_format", "descriptor") else None
-                        pid = (
-                            state.db_ids.get((axis, scope_key))
-                            or state.db_ids.get((axis, None))
-                        )
-                        store_prediction(
-                            conn, post.ig_media_id, axis, pid,
-                            getattr(result.prediction, axis),
-                            simulation_run_id=run_id,
-                        )
-                        incumbent_records.append(MatchRecord(
-                            axis=axis,
-                            match=getattr(result.prediction, axis) == annotation[axis],
-                            cursor=start_cursor + offset,
-                            scope=scope,
-                        ))
-                else:
-                    _store_eval_predictions_for_target(
-                        conn=conn,
-                        post_id=post.ig_media_id,
-                        prompt_version_id=state.db_ids[(target_agent, target_scope)],
-                        target_agent=target_agent,
-                        prediction=result.prediction,
-                        run_id=run_id,
+                for axis in ("category", "visual_format", "strategy"):
+                    scope_key = scope if axis in ("visual_format", "descriptor") else None
+                    pid = (
+                        state.db_ids.get((axis, scope_key))
+                        or state.db_ids.get((axis, None))
                     )
+                    store_prediction(
+                        conn, post.ig_media_id, axis, pid,
+                        getattr(result.prediction, axis),
+                        simulation_run_id=run_id,
+                    )
+                    incumbent_records.append(MatchRecord(
+                        axis=axis,
+                        match=getattr(result.prediction, axis) == annotation[axis],
+                        cursor=start_cursor + offset,
+                        scope=scope,
+                    ))
 
     return MultiEvalResult(
         matches_by_arm=matches_by_arm,
@@ -1650,10 +1672,15 @@ async def main():
         log.info("✓ Simulation terminée")
     except BaseException as exc:
         print()
+        log.setLevel(logging.INFO)
         log.exception("[FATAL] Simulation interrompue: %s", exc)
         if run_id is not None:
-            metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)
-            fail_run(conn, run_id, str(exc), metrics)
+            try:
+                conn.rollback()
+                metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)
+                fail_run(conn, run_id, str(exc), metrics)
+            except Exception as db_exc:
+                log.warning("fail_run échoué: %s", db_exc)
             log.info("  simulation_run_id = %d", run_id)
         raise
     finally:
