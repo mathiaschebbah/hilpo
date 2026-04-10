@@ -103,13 +103,21 @@ def evaluate_result_and_store(
     return errors, matches
 
 
-def target_metric_matches(result: PipelineResult, annotation: dict, target_agent: str) -> list[bool]:
-    """Retourne les matches pris en compte pour la promotion."""
+def target_metric_matches(
+    result: PipelineResult,
+    annotation: dict,
+    target_agent: str,
+    primary_axis: str | None = None,
+) -> list[bool]:
+    """Retourne les matches pris en compte pour la promotion.
+
+    Pour les rewrites descripteur, ``primary_axis`` restreint la métrique
+    à l'axe le plus erroné (celui qui a déclenché le rewrite) au lieu de
+    moyenner sur les 3 axes, ce qui diluerait un gain réel.
+    """
     if target_agent == "descriptor":
-        return [
-            getattr(result.prediction, axis) == annotation[axis]
-            for axis in ("category", "visual_format", "strategy")
-        ]
+        axis = primary_axis or "visual_format"
+        return [getattr(result.prediction, axis) == annotation[axis]]
     return [getattr(result.prediction, target_agent) == annotation[target_agent]]
 
 
@@ -127,6 +135,7 @@ async def async_multi_evaluate(
     labels_by_scope: dict[str, dict[str, list[str]]],
     max_concurrent_api: int = 20,
     on_progress: Callable[[int, int], None] | None = None,
+    primary_axis: str | None = None,
 ) -> MultiEvalResult:
     """Évalue N bras (incumbent + candidats) sur eval_posts en parallèle."""
     if incumbent_arm_id not in arms:
@@ -376,7 +385,7 @@ async def async_multi_evaluate(
 
             result = item[4]
             is_mismatch = item[5]
-            metric_matches = target_metric_matches(result, annotation, target_agent)
+            metric_matches = target_metric_matches(result, annotation, target_agent, primary_axis)
             if is_mismatch:
                 for candidate_arm_id in arms:
                     matches_by_arm[candidate_arm_id].extend(metric_matches)
@@ -402,13 +411,14 @@ async def async_multi_evaluate(
                 run_id=run_id,
                 store_descriptor=False,
             )
-            for axis in ("category", "visual_format", "strategy"):
-                incumbent_records.append(MatchRecord(
-                    axis=axis,
-                    match=getattr(result.prediction, axis) == annotation[axis],
-                    cursor=start_cursor + offset,
-                    scope=scope,
-                ))
+            if arm_id == incumbent_arm_id:
+                for axis in ("category", "visual_format", "strategy"):
+                    incumbent_records.append(MatchRecord(
+                        axis=axis,
+                        match=getattr(result.prediction, axis) == annotation[axis],
+                        cursor=start_cursor + offset,
+                        scope=scope,
+                    ))
 
     return MultiEvalResult(
         matches_by_arm=matches_by_arm,

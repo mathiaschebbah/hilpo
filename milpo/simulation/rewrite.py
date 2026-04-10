@@ -334,6 +334,15 @@ async def run_protegi_rewrite(
     for arm in arms_to_eval:
         arms[arm.beam_row_id] = (arm.instructions, arm.prompt_db_id)
 
+    # Pour les rewrites descripteur, identifier l'axe principal (le plus erroné)
+    # afin d'évaluer le delta de promotion sur cet axe seul au lieu de moyenner
+    # les 3 axes (ce qui dilue un gain réel).
+    primary_axis: str | None = None
+    if target_agent == "descriptor":
+        axis_counts = Counter(e.axis for e in target_errors)
+        primary_axis = axis_counts.most_common(1)[0][0]
+        log.info("[REWRITE #%d] descripteur → métrique de promotion sur %s", rewrite_count, primary_axis)
+
     if on_status:
         on_status(f"eval {len(arms)} bras × {len(eval_posts)} posts...")
 
@@ -356,6 +365,7 @@ async def run_protegi_rewrite(
                 run_id=run_id,
                 labels_by_scope=labels_by_scope,
                 on_progress=_on_eval_progress,
+                primary_axis=primary_axis,
             ),
             timeout=600,
         )

@@ -130,11 +130,19 @@ class EvaluateResultAndStoreTests(unittest.TestCase):
 
 
 class TargetMetricTests(unittest.TestCase):
-    def test_descriptor_returns_all_three_axes(self) -> None:
+    def test_descriptor_uses_primary_axis(self) -> None:
+        result = PipelineResult(prediction=_prediction(), api_calls=[])
+        annotation = {"category": "news", "visual_format": "post_news", "strategy": "wrong"}
+        matches = target_metric_matches(result, annotation, "descriptor", primary_axis="category")
+        self.assertEqual(matches, [True])
+        matches = target_metric_matches(result, annotation, "descriptor", primary_axis="strategy")
+        self.assertEqual(matches, [False])
+
+    def test_descriptor_without_primary_axis_defaults_to_vf(self) -> None:
         result = PipelineResult(prediction=_prediction(), api_calls=[])
         annotation = {"category": "news", "visual_format": "post_news", "strategy": "wrong"}
         matches = target_metric_matches(result, annotation, "descriptor")
-        self.assertEqual(matches, [True, True, False])
+        self.assertEqual(matches, [True])
 
     def test_single_axis_returns_one_match(self) -> None:
         result = PipelineResult(prediction=_prediction(category="mood"), api_calls=[])
