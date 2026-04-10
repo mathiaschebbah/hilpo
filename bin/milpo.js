@@ -10,10 +10,13 @@ const cmd = process.argv[2];
 const args = process.argv.slice(3);
 
 if (cmd === "run") {
-  const child = spawn("npx", ["tsx", "tui/index.tsx", "--", ...args], {
+  const tuiArgs = args.length > 0 ? ["--", ...args] : [];
+  const child = spawn("npx", ["tsx", "tui/index.tsx", ...tuiArgs], {
     cwd: root,
     stdio: "inherit",
   });
+  process.on("SIGINT", () => child.kill("SIGINT"));
+  process.on("SIGTERM", () => child.kill("SIGTERM"));
   child.on("exit", (code) => process.exit(code ?? 0));
 } else {
   console.log("Usage: milpo run [--dry-run] [--limit N] [--batch-size N] ...");
