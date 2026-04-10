@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -33,6 +34,7 @@ from dataclasses import dataclass, field
 
 from rich.console import Console
 from rich.live import Live
+from websockets.sync.client import connect as ws_connect
 
 from milpo.async_inference import (
     async_call_descriptor,
@@ -1294,6 +1296,26 @@ async def run_protegi_rewrite(
 
 from milpo.tui import SimulationDisplay
 
+# ── WebSocket télémétrie ─────────────────────────────────────
+
+_ws = None
+
+
+def init_telemetry():
+    """Connecte au WS server de la TUI TypeScript."""
+    global _ws
+    port = os.environ.get("MILPO_WS_PORT", "9999")
+    _ws = ws_connect(f"ws://localhost:{port}")
+
+
+def emit_telemetry(display: SimulationDisplay):
+    """Envoie l'état complet au WS server."""
+    if _ws is not None:
+        try:
+            _ws.send(json.dumps(display.to_json()))
+        except Exception:
+            pass
+
 
 # ── Main ──────────────────────────────────────────────────────
 
@@ -1348,6 +1370,9 @@ async def main():
     skipped_rewrite_count = 0
     skipped_classification_posts = 0
     failed_rewrite_attempts = 0
+
+    # Connecter la télémétrie WS
+    init_telemetry()
 
     # Silence TOUT le logging pendant l'exécution (la TUI remplace les logs)
     import warnings
@@ -1441,7 +1466,7 @@ async def main():
             display.heartbeat("classifying batch")
             def _on_post_done(done: int, total_batch: int, errors: int):
                 display.heartbeat(f"post {cursor + done}/{total}")
-                live.update(display.build())
+                live.update(display.build()); emit_telemetry(display)
 
             try:
                 batch_results = await asyncio.wait_for(
@@ -1459,7 +1484,7 @@ async def main():
                 display.add_event(f"TIMEOUT batch {cursor}-{batch_end} ({BATCH_TIMEOUT}s) — skipped")
                 skipped_classification_posts += len(micro_batch)
                 cursor = batch_end
-                live.update(display.build())
+                live.update(display.build()); emit_telemetry(display)
                 continue
 
             # Créer un mapping post -> result pour gérer les échecs
@@ -1515,7 +1540,7 @@ async def main():
             display.matches_by_scope = matches_by_scope
             display.n_by_scope = n_by_scope
             display.update_rolling(all_matches)
-            live.update(display.build())
+            live.update(display.build()); emit_telemetry(display)
 
             # ── Trigger rewrite ? ──
             if (
@@ -1529,7 +1554,7 @@ async def main():
                 if not target_errors:
                     display.add_event(f"No exploitable errors for {target_agent}/{target_scope or 'all'}")
                     error_buffer.clear()
-                    live.update(display.build())
+                    live.update(display.build()); emit_telemetry(display)
                     continue
 
                 eval_end = min(cursor + args.eval_window, total)
@@ -1539,7 +1564,7 @@ async def main():
                     skipped_rewrite_count += 1
                     display.add_event(f"Rewrite skipped (only {len(eval_posts)} posts left for eval)")
                     error_buffer.clear()
-                    live.update(display.build())
+                    live.update(display.build()); emit_telemetry(display)
                     continue
 
                 rewrite_count += 1
@@ -1548,11 +1573,11 @@ async def main():
                     f"REWRITE #{rewrite_count} triggered — {target_agent}/{target_scope or 'all'} "
                     f"({len(target_errors)} errors)"
                 )
-                live.update(display.build())
+                live.update(display.build()); emit_telemetry(display)
 
                 def _on_rewrite_status(msg: str):
                     display.set_rewrite_phase(msg)
-                    live.update(display.build())
+                    live.update(display.build()); emit_telemetry(display)
 
                 outcome = await run_protegi_rewrite(
                     args, conn, run_id, rewrite_count,
@@ -1619,11 +1644,11 @@ async def main():
                 display.total_output_tokens = total_output_tokens
                 display.matches_by_scope = matches_by_scope
                 display.n_by_scope = n_by_scope
-                live.update(display.build())
+                live.update(display.build()); emit_telemetry(display)
 
                 if consecutive_failures >= args.patience:
                     display.add_event(f"Patience exhausted ({consecutive_failures}/{args.patience})")
-                    live.update(display.build())
+                    live.update(display.build()); emit_telemetry(display)
                     rewrites_stopped = True
 
         # Restaurer le logging pour le résumé final (hors Live / plein écran)

@@ -177,3 +177,47 @@ class SimulationDisplay:
         self.error_count = error_count
         self.cost = cost
         self.prompt_versions = prompt_versions
+
+    def to_json(self) -> dict:
+        """Sérialise l'état complet pour la TUI TypeScript (WebSocket)."""
+        elapsed = time.monotonic() - self.t0
+        rate = self.n_processed / elapsed if elapsed > 0 else 0
+        eta = (self.total - self.cursor) / rate if rate > 0 else 0
+        n = self.n_processed or 1
+        return {
+            "runId": self.run_id,
+            "cursor": self.cursor,
+            "total": self.total,
+            "nProcessed": self.n_processed,
+            "rate": round(rate, 2),
+            "elapsedSec": round(elapsed),
+            "etaSec": round(eta),
+            "accuracy": {
+                "category": round(self.matches_by_axis["category"] / n * 100, 1),
+                "visualFormat": round(self.matches_by_axis["visual_format"] / n * 100, 1),
+                "strategy": round(self.matches_by_axis["strategy"] / n * 100, 1),
+            },
+            "rolling50": self.rolling_acc if self.rolling_acc else None,
+            "byScope": {
+                scope: {
+                    "n": self.n_by_scope.get(scope, 0),
+                    "category": self.matches_by_scope[scope]["category"],
+                    "visualFormat": self.matches_by_scope[scope]["visual_format"],
+                    "strategy": self.matches_by_scope[scope]["strategy"],
+                } for scope in ("FEED", "REELS")
+            },
+            "costUsd": round(self.cost, 3),
+            "inputTokens": self.total_input_tokens,
+            "outputTokens": self.total_output_tokens,
+            "maxPromptVersion": max(self.prompt_versions.values()) if self.prompt_versions else 0,
+            "errorBufferSize": self.error_count,
+            "batchSize": self.batch_size,
+            "skipped": self.skipped,
+            "phase": self.phase,
+            "rewriteSubPhase": self.rewrite_sub_phase,
+            "rewritesPromoted": self.rewrites_promoted,
+            "rewritesRollback": self.rewrites_rollback,
+            "lastActivitySec": round(time.monotonic() - self.last_activity),
+            "lastActivityLabel": self.last_activity_label,
+            "events": [{"ts": e[:8], "msg": e[10:]} for e in list(self.events)],
+        }
