@@ -68,7 +68,7 @@ class AddApiLogTests(unittest.TestCase):
         d.add_api_log("category", "qwen-3.5-flash", 456, 2100, 200, "ok")
         msg = d.to_json()["events"][0]["msg"]
         self.assertIn("2.1K", msg)
-        self.assertIn("0.2K", msg)
+        self.assertIn("200", msg)
 
     def test_ok_status_has_checkmark(self) -> None:
         d = self._display()

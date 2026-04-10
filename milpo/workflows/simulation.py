@@ -367,7 +367,8 @@ async def run_simulation(args) -> int:
                         emit_telemetry(display)
                         continue
 
-                    eval_end = min(cursor + args.eval_window, total)
+                    ew = 20 if target_agent == "descriptor" else args.eval_window
+                    eval_end = min(cursor + ew, total)
                     eval_posts = post_inputs[cursor:eval_end]
                     if len(eval_posts) < 5:
                         skipped_rewrite_count += 1
@@ -389,6 +390,11 @@ async def run_simulation(args) -> int:
                     def _on_rewrite_status(msg: str):
                         display.set_rewrite_phase(msg)
                         display.heartbeat(msg[:30])
+
+                    # Descripteur : c=2 (moins de candidats, chaque eval est 4x plus chère)
+                    saved_c = args.protegi_c
+                    if target_agent == "descriptor":
+                        args.protegi_c = min(args.protegi_c, 2)
 
                     try:
                         outcome = await asyncio.wait_for(
@@ -484,6 +490,7 @@ async def run_simulation(args) -> int:
                         cursor += outcome.eval_window_consumed
                         error_buffer.clear()
 
+                    args.protegi_c = saved_c
                     display.set_rewrite_phase(None)
                     display.phase = "classification"
                     display.rewrites_promoted = promoted_rewrite_count
