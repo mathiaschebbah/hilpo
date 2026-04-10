@@ -28,11 +28,12 @@ MODEL_DESCRIPTOR_FEED = os.environ.get("MILPO_MODEL_DESCRIPTOR", "gemini-3.1-fla
 MODEL_DESCRIPTOR_REELS = os.environ.get("MILPO_MODEL_DESCRIPTOR", "gemini-3.1-flash-lite-preview")
 MODEL_CLASSIFIER = os.environ.get("MILPO_MODEL_CLASSIFIER", "gemini-3.1-flash-lite-preview")
 
-MODEL_REWRITER = os.environ.get("HILPO_MODEL_REWRITER", "openai/gpt-5.4")
+MODEL_REWRITER = os.environ.get("HILPO_MODEL_REWRITER", "gpt-5.4")
 
-# Le rewriter utilise OpenRouter (GPT-5.4) même quand le pipeline principal est sur Google
-REWRITER_API_KEY = OPENROUTER_API_KEY
-REWRITER_BASE_URL = "https://openrouter.ai/api/v1"
+# Le rewriter utilise l'API OpenAI directe
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+REWRITER_API_KEY = OPENAI_API_KEY
+REWRITER_BASE_URL = "https://api.openai.com/v1"
 
 # Modèles pour la boucle ProTeGi (mode --mode protegi).
 # Par défaut tous = MODEL_REWRITER pour isoler l'effet de la décomposition
