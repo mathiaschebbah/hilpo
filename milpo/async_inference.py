@@ -30,6 +30,14 @@ from milpo.schemas import (
 
 log = logging.getLogger("milpo")
 
+_on_api_call = None
+
+
+def set_api_call_hook(hook):
+    """Définit un callback appelé après chaque appel API async (descriptor/classifier)."""
+    global _on_api_call
+    _on_api_call = hook
+
 
 def get_async_client() -> AsyncOpenAI:
     if not OPENROUTER_API_KEY:
@@ -107,11 +115,15 @@ async def async_call_descriptor(
             raise RuntimeError("Descriptor: JSON invalide après retries") from exc
 
         usage = response.usage
+        in_tok = usage.prompt_tokens if usage else 0
+        out_tok = usage.completion_tokens if usage else 0
+        if _on_api_call:
+            _on_api_call("descriptor", model, latency_ms, in_tok, out_tok, "ok")
         return features, ApiCallLog(
             agent="descriptor",
             model=model,
-            input_tokens=usage.prompt_tokens if usage else 0,
-            output_tokens=usage.completion_tokens if usage else 0,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             latency_ms=latency_ms,
         )
 
@@ -214,11 +226,15 @@ async def async_call_classifier(
             raise RuntimeError(f"Classifier {axis}: arguments invalides après retries") from exc
 
         usage = response.usage
+        in_tok = usage.prompt_tokens if usage else 0
+        out_tok = usage.completion_tokens if usage else 0
+        if _on_api_call:
+            _on_api_call(axis, model, latency_ms, in_tok, out_tok, "ok")
         return label, confidence, ApiCallLog(
             agent=axis,
             model=model,
-            input_tokens=usage.prompt_tokens if usage else 0,
-            output_tokens=usage.completion_tokens if usage else 0,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             latency_ms=latency_ms,
         )
 

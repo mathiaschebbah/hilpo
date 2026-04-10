@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from rich.panel import Panel
+
+
+@dataclass
+class DisplayEvent:
+    """Événement structuré pour l'affichage TUI."""
+
+    ts: str
+    msg: str
+    type: str = "event"  # "event" | "api" | "error"
 
 
 class SimulationDisplay:
@@ -16,7 +26,7 @@ class SimulationDisplay:
         self.run_id = run_id
         self.total = total
         self.batch_size = batch_size
-        self.events: deque[str] = deque(maxlen=8)
+        self.events: deque[DisplayEvent] = deque(maxlen=200)
         self.t0 = time.monotonic()
         self.cursor = 0
         self.n_processed = 0
@@ -53,10 +63,38 @@ class SimulationDisplay:
         if label:
             self.last_activity_label = label
 
-    def add_event(self, msg: str):
+    def add_event(self, msg: str, event_type: str = "event"):
         ts = datetime.now().strftime("%H:%M:%S")
-        self.events.appendleft(f"{ts}  {msg}")
+        self.events.appendleft(DisplayEvent(ts=ts, msg=msg, type=event_type))
         self.heartbeat(msg[:30])
+
+    @staticmethod
+    def _fmt_tok(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        return f"{n / 1_000:.1f}K"
+
+    def add_api_log(
+        self,
+        agent: str,
+        model: str,
+        latency_ms: int,
+        in_tok: int,
+        out_tok: int,
+        status: str,
+    ):
+        """Ajoute un log d'appel API formaté au flux d'événements."""
+        status_icon = "\u2713" if status == "ok" else "ERR" if status == "error" else "\u21bb"
+        short_model = model.split("/")[-1] if "/" in model else model
+        if len(short_model) > 20:
+            short_model = short_model[:20]
+        msg = (
+            f"{agent:<12s} {short_model:<20s} "
+            f"{latency_ms:>5d}ms  "
+            f"{self._fmt_tok(in_tok)}\u2192{self._fmt_tok(out_tok)}  "
+            f"{status_icon}"
+        )
+        self.add_event(msg, event_type="api")
 
     def set_rewrite_phase(self, sub_phase: str | None):
         self.rewrite_sub_phase = sub_phase
@@ -141,7 +179,7 @@ class SimulationDisplay:
         if self.events:
             lines.append("\u2500 Events " + "\u2500" * 43)
             for ev in list(self.events)[:6]:
-                lines.append(f" {ev}")
+                lines.append(f" {ev.ts}  {ev.msg}")
 
         content = "\n".join(lines)
         return Panel(
@@ -222,5 +260,5 @@ class SimulationDisplay:
             "rewritesRollback": self.rewrites_rollback,
             "lastActivitySec": round(time.monotonic() - self.last_activity),
             "lastActivityLabel": self.last_activity_label,
-            "events": [{"ts": e[:8], "msg": e[10:]} for e in list(self.events)],
+            "events": [{"ts": e.ts, "msg": e.msg, "type": e.type} for e in list(self.events)],
         }

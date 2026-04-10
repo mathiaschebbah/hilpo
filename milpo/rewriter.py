@@ -40,6 +40,14 @@ log = logging.getLogger("milpo")
 
 MAX_SYNC_RETRIES = 3
 
+_on_api_call = None
+
+
+def set_rewriter_api_hook(hook):
+    """Définit un callback appelé après chaque appel API sync du rewriter."""
+    global _on_api_call
+    _on_api_call = hook
+
 
 def _sleep_before_retry(attempt: int) -> None:
     """Backoff exponentiel simple pour les appels sync."""
@@ -344,12 +352,11 @@ def _call_with_retry(
             if not content:
                 raise RuntimeError(f"{label}: content vide")
             latency_ms = int((time.perf_counter() - t0) * 1000)
-            return (
-                content,
-                response.usage.prompt_tokens if response.usage else 0,
-                response.usage.completion_tokens if response.usage else 0,
-                latency_ms,
-            )
+            in_tok = response.usage.prompt_tokens if response.usage else 0
+            out_tok = response.usage.completion_tokens if response.usage else 0
+            if _on_api_call:
+                _on_api_call(label, model, latency_ms, in_tok, out_tok, "ok")
+            return (content, in_tok, out_tok, latency_ms)
         except Exception as exc:
             last_error = exc
             log.warning("%s appel échoué (attempt %d/%d): %s",

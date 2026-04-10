@@ -1,26 +1,46 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-export const EventLog: React.FC<{ events: Array<{ ts: string; msg: string }> }> = ({ events }) => {
-  if (events.length === 0) return null;
+type EventEntry = { ts: string; msg: string; type?: "event" | "api" | "error" };
 
-  const maxEvents = Math.min(events.length, 12);
+export const EventLog: React.FC<{
+  events: EventEntry[];
+  maxLines?: number;
+}> = ({ events, maxLines = 12 }) => {
+  if (events.length === 0) {
+    return (
+      <Box flexDirection="column" flexGrow={1}>
+        <Text dimColor> Waiting for API calls...</Text>
+      </Box>
+    );
+  }
+
+  const visible = events.slice(0, maxLines);
 
   return (
-    <Box flexDirection="column">
-      <Text dimColor>{" "}{"\u2500".repeat(52)}</Text>
-      <Text dimColor>{" "}Events</Text>
-      {events.slice(0, maxEvents).map((ev, i) => {
+    <Box flexDirection="column" flexGrow={1}>
+      {visible.map((ev, i) => {
+        if (ev.type === "api") {
+          return (
+            <Text key={i} dimColor>
+              {" "}<Text color="gray">{ev.ts}</Text>{"  "}{ev.msg}
+            </Text>
+          );
+        }
+
+        // Important events get color based on content
         const color = ev.msg.includes("PROMOTED")
           ? "green"
           : ev.msg.includes("ROLLBACK")
             ? "red"
-            : ev.msg.includes("FAILED") || ev.msg.includes("skipped") || ev.msg.includes("TIMEOUT")
+            : ev.msg.includes("FAILED") || ev.msg.includes("TIMEOUT")
               ? "yellow"
-              : undefined;
+              : ev.msg.includes("REWRITE")
+                ? "cyan"
+                : undefined;
 
         return (
-          <Text key={i}>
+          <Text key={i} bold>
             {" "}<Text dimColor>{ev.ts}</Text>{"  "}
             <Text color={color}>{ev.msg}</Text>
           </Text>

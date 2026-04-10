@@ -38,5 +38,5 @@ export interface TelemetryState {
   lastActivitySec: number;
   lastActivityLabel: string;
 
-  events: Array<{ ts: string; msg: string }>;
+  events: Array<{ ts: string; msg: string; type?: "event" | "api" | "error" }>;
 }

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 import type { TelemetryState } from "../types.js";
 import { ProgressBar } from "./ProgressBar.js";
 import { AccuracyPanel } from "./AccuracyPanel.js";
 import { EventLog } from "./EventLog.js";
 
 const StatusIndicator: React.FC<{ state: TelemetryState }> = ({ state }) => {
-  const { lastActivitySec, lastActivityLabel, phase, rewriteSubPhase } = state;
+  const { lastActivitySec, phase, rewriteSubPhase } = state;
 
   let statusColor: string;
   let statusText: string;
@@ -27,6 +27,9 @@ const StatusIndicator: React.FC<{ state: TelemetryState }> = ({ state }) => {
         {" "}v{state.maxPromptVersion}{"    "}
         err={state.errorBufferSize}/{state.batchSize}{"    "}
         <Text color={statusColor} bold>{statusText}</Text>
+        {state.rewritesPromoted > 0 && <Text color="green">{"    "}promoted={state.rewritesPromoted}</Text>}
+        {state.rewritesRollback > 0 && <Text color="red">{"    "}rollback={state.rewritesRollback}</Text>}
+        {state.skipped > 0 && <Text color="yellow">{"    "}skipped={state.skipped}</Text>}
       </Text>
       {phase !== "classification" && (
         <Text>
@@ -34,34 +37,38 @@ const StatusIndicator: React.FC<{ state: TelemetryState }> = ({ state }) => {
           {rewriteSubPhase && <Text dimColor>{"  \u2514\u2500 "}{rewriteSubPhase}</Text>}
         </Text>
       )}
-      {(state.rewritesPromoted > 0 || state.rewritesRollback > 0 || state.skipped > 0) && (
-        <Text>
-          {" "}Rewrites{"   "}
-          {state.rewritesPromoted > 0 && <Text color="green">promoted={state.rewritesPromoted} </Text>}
-          {state.rewritesRollback > 0 && <Text color="red">rollback={state.rewritesRollback} </Text>}
-          {state.skipped > 0 && <Text color="yellow">skipped={state.skipped}</Text>}
-        </Text>
-      )}
     </Box>
   );
 };
 
 export const Dashboard: React.FC<{ state: TelemetryState; done: boolean }> = ({ state, done }) => {
+  const { stdout } = useStdout();
+  const [termRows, setTermRows] = useState(stdout.rows ?? 24);
   const [, setTick] = useState(0);
   const stateReceivedAt = useRef(Date.now());
   const prevState = useRef(state);
 
+  // Track terminal resize
+  useEffect(() => {
+    const onResize = () => setTermRows(stdout.rows ?? 24);
+    stdout.on("resize", onResize);
+    return () => { stdout.off("resize", onResize); };
+  }, [stdout]);
+
+  // Track when state changes
   if (prevState.current !== state) {
     stateReceivedAt.current = Date.now();
     prevState.current = state;
   }
 
+  // Tick every second for live clock
   useEffect(() => {
     if (done) return;
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [done]);
 
+  // Locally-interpolated time values
   const sinceLastState = Math.floor((Date.now() - stateReceivedAt.current) / 1000);
   const localState: TelemetryState = {
     ...state,
@@ -74,15 +81,28 @@ export const Dashboard: React.FC<{ state: TelemetryState; done: boolean }> = ({ 
     ? ` MILPO Simulation \u2014 run #${localState.runId} \u2014 DONE`
     : ` MILPO Simulation \u2014 run #${localState.runId}`;
 
+  // Fixed header = ~9 lines (progress 2 + separator 1 + accuracy 3 + status 2 + separator 1)
+  // Border top/bottom = 2 lines, title = 1 line, blank = 1 line
+  // Total overhead ~13 lines
+  const headerOverhead = 13;
+  const eventsHeight = Math.max(4, termRows - headerOverhead);
+
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={done ? "green" : "blue"} paddingX={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={done ? "green" : "blue"}
+      paddingX={1}
+      height={termRows}
+    >
       <Text bold color={done ? "green" : "blue"}>{title}</Text>
       <Text>{""}</Text>
       <ProgressBar state={localState} />
       <Text dimColor>{" "}{"\u2500".repeat(52)}</Text>
       <AccuracyPanel state={localState} />
       <StatusIndicator state={localState} />
-      <EventLog events={localState.events} />
+      <Text dimColor>{" "}{"\u2500".repeat(52)}</Text>
+      <EventLog events={localState.events} maxLines={eventsHeight} />
     </Box>
   );
 };

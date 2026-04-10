@@ -12,7 +12,7 @@ import warnings
 from rich.console import Console
 from rich.live import Live
 
-from milpo.async_inference import async_classify_batch
+from milpo.async_inference import async_classify_batch, set_api_call_hook
 from milpo.config import MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER
 from milpo.db import (
     get_conn,
@@ -25,7 +25,7 @@ from milpo.gcs import sign_all_posts_media
 from milpo.inference import PostInput
 from milpo.persistence import create_run, fail_run, finish_run
 from milpo.prompting import build_labels, build_prompt_set
-from milpo.rewriter import ErrorCase
+from milpo.rewriter import ErrorCase, set_rewriter_api_hook
 from milpo.simulation.display import SimulationDisplay
 from milpo.simulation.evaluation import evaluate_result_and_store
 from milpo.simulation.rewrite import get_target_errors, pick_rewrite_target, run_protegi_rewrite
@@ -228,6 +228,13 @@ async def run_simulation(args) -> int:
         total = len(post_inputs)
         feed = sum(1 for post in post_inputs if post.media_product_type == "FEED")
         display = SimulationDisplay(run_id=run_id, total=total, batch_size=args.batch_size)
+
+        def _on_api(agent, model, latency_ms, in_tok, out_tok, status):
+            display.add_api_log(agent, model, latency_ms, in_tok, out_tok, status)
+            emit_telemetry(display)
+
+        set_api_call_hook(_on_api)
+        set_rewriter_api_hook(_on_api)
         display.add_event(f"Loaded {total} posts (FEED {feed} / REELS {total - feed})")
         display.add_event(
             f"Config B={args.batch_size} delta={args.delta*100:.0f}% "
