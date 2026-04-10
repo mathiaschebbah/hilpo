@@ -1,4 +1,4 @@
-"""Tools pour la pipeline agentique A0.
+"""Tools pour les pipelines agentiques A0/A1.
 
 Tools de perception (construisent le contexte) :
 - describe_media : Descripteur multimodal Gemini (JSON structuré ou texte libre)
@@ -13,12 +13,10 @@ L'advisor Opus est un tool serveur Anthropic natif (pas géré ici).
 
 from __future__ import annotations
 
-import json
 import logging
+import threading
 import time
-
-from openai import OpenAI
-
+from concurrent.futures import Future
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -36,6 +34,8 @@ from milpo.schemas import DescriptorFeatures, build_json_schema_response_format
 from agents.config import (
     ADVISOR_CACHE_TTL,
     ADVISOR_MAX_USES,
+    BOUNDED_ADVISOR_MAX_USES,
+    BOUNDED_EXAMPLES_PER_CALL_MAX,
     DEFAULT_EXAMPLES,
     MAX_EXAMPLES_PER_CALL,
     MODEL_ADVISOR,
@@ -75,16 +75,20 @@ def load_tool_prompts(conn) -> ToolPrompts:
 # ── Définitions des tools (format Anthropic) ──────────────────────
 
 
+def _advisor_tool(*, max_uses: int) -> dict:
+    return {
+        "type": "advisor_20260301",
+        "name": "advisor",
+        "model": MODEL_ADVISOR,
+        "max_uses": max_uses,
+        "caching": {"type": "ephemeral", "ttl": ADVISOR_CACHE_TTL},
+    }
+
+
 def _perception_tools(prompts: ToolPrompts) -> list[dict]:
     """Tools de perception avec descriptions chargées depuis la BDD."""
     return [
-        {
-            "type": "advisor_20260301",
-            "name": "advisor",
-            "model": MODEL_ADVISOR,
-            "max_uses": ADVISOR_MAX_USES,
-            "caching": {"type": "ephemeral", "ttl": ADVISOR_CACHE_TTL},
-        },
+        _advisor_tool(max_uses=ADVISOR_MAX_USES),
         {
             "name": "describe_media",
             "description": prompts.describe_media,
@@ -188,11 +192,148 @@ def build_tools_for_phase(axis: str, labels: list[str], prompts: ToolPrompts) ->
     return _perception_tools(prompts) + [build_submit_tool(axis, labels)]
 
 
+def build_submit_all_classifications_tool(
+    *,
+    category_labels: list[str],
+    visual_format_labels: list[str],
+    strategy_labels: list[str],
+) -> dict:
+    return {
+        "name": "submit_all_classifications",
+        "description": (
+            "Soumets les 3 classifications finales en une seule fois. "
+            "Chaque raisonnement doit rester court et directement lié aux indices observés."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "enum": category_labels},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "reasoning": {"type": "string"},
+                    },
+                    "required": ["label", "confidence", "reasoning"],
+                    "additionalProperties": False,
+                },
+                "visual_format": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "enum": visual_format_labels},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "reasoning": {"type": "string"},
+                    },
+                    "required": ["label", "confidence", "reasoning"],
+                    "additionalProperties": False,
+                },
+                "strategy": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "enum": strategy_labels},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "reasoning": {"type": "string"},
+                    },
+                    "required": ["label", "confidence", "reasoning"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["category", "visual_format", "strategy"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_bounded_tools(
+    *,
+    prompts: ToolPrompts,
+    category_labels: list[str],
+    visual_format_labels: list[str],
+    strategy_labels: list[str],
+) -> list[dict]:
+    tools = [
+        _advisor_tool(max_uses=BOUNDED_ADVISOR_MAX_USES),
+        {
+            "name": "describe_media",
+            "description": prompts.describe_media,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "focus": {
+                        "type": "string",
+                        "description": (
+                            "Question libre optionnelle pour cibler l'analyse. "
+                            "Si absent, retourne la description structurée complète."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "get_taxonomy",
+            "description": prompts.get_taxonomy,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "axis": {
+                        "type": "string",
+                        "enum": ["category", "visual_format", "strategy"],
+                        "description": "Axe de classification.",
+                    },
+                },
+                "required": ["axis"],
+            },
+        },
+        {
+            "name": "get_examples",
+            "description": (
+                f"{prompts.get_examples} "
+                f"Budget strict: un seul appel par post, n <= {BOUNDED_EXAMPLES_PER_CALL_MAX}."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "axis": {
+                        "type": "string",
+                        "enum": ["category", "visual_format", "strategy"],
+                        "description": "Axe de classification.",
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Label pour lequel récupérer des exemples.",
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": f"Nombre d'exemples (max: {BOUNDED_EXAMPLES_PER_CALL_MAX}).",
+                    },
+                },
+                "required": ["axis", "label"],
+            },
+        },
+        build_submit_all_classifications_tool(
+            category_labels=category_labels,
+            visual_format_labels=visual_format_labels,
+            strategy_labels=strategy_labels,
+        ),
+    ]
+    return tools
+
+
 # ── Client OpenRouter pour le descripteur Gemini ──────────────────
+
+_openrouter_client: OpenAI | None = None
+_openrouter_client_lock = threading.Lock()
 
 
 def _get_openrouter_client() -> OpenAI:
-    return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
+    global _openrouter_client
+    if _openrouter_client is None:
+        with _openrouter_client_lock:
+            if _openrouter_client is None:
+                _openrouter_client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
+    return _openrouter_client
 
 
 # ── Contexte média (partagé entre les appels describe_media) ──────
@@ -220,6 +361,8 @@ class MediaContext:
         self.descriptor_descriptions = descriptor_descriptions
         self._cached_features: DescriptorFeatures | None = None
         self._cached_features_json: str | None = None
+        self._descriptor_prefetch_future: Future[tuple[str, dict]] | None = None
+        self._descriptor_prefetch_result: tuple[str, dict] | None = None
 
 
 # ── Implémentation des tools ──────────────────────────────────────

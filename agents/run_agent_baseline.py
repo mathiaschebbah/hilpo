@@ -1,43 +1,30 @@
-"""Évaluation pipeline agentique A0 sur le split test.
-
-Usage :
-    uv run python agents/run_agent_baseline.py
-    uv run python agents/run_agent_baseline.py --limit 10   # test rapide sur 10 posts
-    uv run python agents/run_agent_baseline.py --dry-run     # affiche les posts sans classifier
-
-Variables d'environnement (chargées depuis .env) :
-    ANTHROPIC_API_KEY               — clé API Anthropic (pour Haiku + advisor Opus)
-    OPENROUTER_API_KEY              — clé API OpenRouter (pour Gemini descripteur)
-    HILPO_GCS_SIGNING_SA_EMAIL      — service account pour signer les URLs GCS
-    HILPO_DATABASE_DSN              — DSN PostgreSQL
-"""
+"""Évaluation des pipelines agentiques A1 bounded et A0 legacy."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import queue
+import statistics
 import sys
-import time
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 
+from agents import pipeline as agent_pipeline
+from agents.config import MODEL_ADVISOR, MODEL_DESCRIPTOR, MODEL_EXECUTOR
+from agents.pipeline import AgentResult, classify_post_agentic
+from agents.tools import MediaContext
 from milpo.db import (
     format_descriptions,
     get_active_prompt,
     get_conn,
-    load_categories,
     load_post_media,
-    load_strategies,
     load_visual_formats,
-    store_api_call,
-    store_prediction,
 )
 from milpo.gcs import sign_all_posts_media
-
-from agents.config import MODEL_ADVISOR, MODEL_DESCRIPTOR, MODEL_EXECUTOR
-from agents.pipeline import AgentResult, classify_post_agentic
-from agents.tools import MediaContext
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +39,26 @@ logging.getLogger("anthropic").setLevel(logging.WARNING)
 log = logging.getLogger("agent_baseline")
 
 
-# ── Helpers BDD ───────────────────────────────────────────────────
+@dataclass
+class ReporterStats:
+    started: int = 0
+    completed: int = 0
+    errors: int = 0
+    in_flight_posts: int = 0
+    total_api_calls: int = 0
+    total_advisor_calls: int = 0
+    total_tool_calls: int = 0
+    total_executor_requests: int = 0
+    total_executor_input_tokens: int = 0
+    total_executor_cache_creation_tokens: int = 0
+    total_executor_cache_read_tokens: int = 0
+    executor_successes: int = 0
+    executor_cache_hits: int = 0
+    posts_with_advisor: int = 0
+    matches_total: dict[str, int] = field(
+        default_factory=lambda: {"category": 0, "visual_format": 0, "strategy": 0}
+    )
+    latencies_ms: list[int] = field(default_factory=list)
 
 
 def create_run(conn, config: dict) -> int:
@@ -68,7 +74,7 @@ def create_run(conn, config: dict) -> int:
     return row["id"]
 
 
-def finish_run(conn, run_id: int, metrics: dict):
+def finish_run(conn, run_id: int, metrics: dict) -> None:
     conn.execute(
         """
         UPDATE simulation_runs SET
@@ -91,7 +97,7 @@ def finish_run(conn, run_id: int, metrics: dict):
     conn.commit()
 
 
-def fail_run(conn, run_id: int):
+def fail_run(conn, run_id: int) -> None:
     conn.execute(
         "UPDATE simulation_runs SET status = 'failed', finished_at = NOW() WHERE id = %s",
         (run_id,),
@@ -99,120 +105,222 @@ def fail_run(conn, run_id: int):
     conn.commit()
 
 
-# ── Stockage résultats ────────────────────────────────────────────
+def _percentile(values: list[int], q: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * q)))
+    return ordered[index]
 
 
 def store_agent_results(
     conn,
     result: AgentResult,
     run_id: int,
+    pipeline_name: str,
 ) -> dict[str, bool]:
-    """Stocke les prédictions, api_calls et trace de l'agent en BDD."""
-    matches = {}
+    matches: dict[str, bool] = {}
 
-    for axis in ("category", "visual_format", "strategy"):
-        classification = getattr(result, axis)
-        pid = store_prediction(
-            conn,
-            ig_media_id=result.ig_media_id,
-            agent=axis,
-            prompt_version_id=result.prompt_version_id,
-            predicted_value=classification.label,
-            raw_response={
-                "confidence": classification.confidence,
-                "reasoning": classification.reasoning[-300:],
-                "pipeline": "agent_a0",
-            },
-            simulation_run_id=run_id,
-        )
-        row = conn.execute("SELECT match FROM predictions WHERE id = %s", (pid,)).fetchone()
-        matches[axis] = bool(row and row["match"])
-
-    # Stocker les api_calls — mapper vers agent_type enum valide
-    for call in result.api_calls:
-        if call.agent.startswith("tool/describe"):
-            db_agent = "descriptor"
-        else:
-            db_agent = "agent_executor"
-        store_api_call(
-            conn,
-            call_type="classification",
-            agent=db_agent,
-            model_name=call.model,
-            prompt_version_id=None,
-            ig_media_id=result.ig_media_id,
-            input_tokens=call.input_tokens,
-            output_tokens=call.output_tokens,
-            cost_usd=None,
-            latency_ms=call.latency_ms,
-            simulation_run_id=run_id,
-        )
-
-    # Stocker la trace structurée dans agent_traces
-    # Agréger les tokens par type (executor, advisor, descriptor)
-    tok_exec_in = sum(c.input_tokens for c in result.api_calls if c.agent.startswith("agent/"))
-    tok_exec_out = sum(c.output_tokens for c in result.api_calls if c.agent.startswith("agent/"))
+    tok_exec_in = sum(c.input_tokens for c in result.api_calls if c.agent.startswith("executor/"))
+    tok_exec_out = sum(c.output_tokens for c in result.api_calls if c.agent.startswith("executor/"))
     tok_adv_in = sum(c.input_tokens for c in result.api_calls if c.agent.startswith("advisor/"))
     tok_adv_out = sum(c.output_tokens for c in result.api_calls if c.agent.startswith("advisor/"))
     tok_desc_in = sum(c.input_tokens for c in result.api_calls if c.agent.startswith("tool/"))
     tok_desc_out = sum(c.output_tokens for c in result.api_calls if c.agent.startswith("tool/"))
+    trace_json = json.dumps([event.to_dict() for event in result.trace], ensure_ascii=False)
 
-    trace_json = json.dumps([e.to_dict() for e in result.trace])
+    with conn.transaction():
+        for axis in ("category", "visual_format", "strategy"):
+            classification = getattr(result, axis)
+            row = conn.execute(
+                """
+                INSERT INTO predictions
+                    (ig_media_id, agent, prompt_version_id, predicted_value, raw_response, simulation_run_id)
+                VALUES (%s, %s::agent_type, %s, %s, %s::jsonb, %s)
+                RETURNING match
+                """,
+                (
+                    result.ig_media_id,
+                    axis,
+                    result.prompt_version_id,
+                    classification.label,
+                    json.dumps(
+                        {
+                            "confidence": classification.confidence,
+                            "reasoning": classification.reasoning[-300:],
+                            "pipeline": pipeline_name,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    run_id,
+                ),
+            ).fetchone()
+            matches[axis] = bool(row and row["match"])
 
-    conn.execute(
-        """
-        INSERT INTO agent_traces
-            (simulation_run_id, ig_media_id,
-             tool_calls, advisor_calls,
-             input_tokens_executor, output_tokens_executor,
-             input_tokens_advisor, output_tokens_advisor,
-             input_tokens_descriptor, output_tokens_descriptor,
-             latency_ms,
-             category_label, category_confidence,
-             visual_format_label, visual_format_confidence,
-             strategy_label, strategy_confidence,
-             trace)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-        """,
-        (
-            run_id, result.ig_media_id,
-            result.tool_calls, result.advisor_calls,
-            tok_exec_in, tok_exec_out,
-            tok_adv_in, tok_adv_out,
-            tok_desc_in, tok_desc_out,
-            result.latency_ms,
-            result.category.label, result.category.confidence,
-            result.visual_format.label, result.visual_format.confidence,
-            result.strategy.label, result.strategy.confidence,
-            trace_json,
-        ),
-    )
-    conn.commit()
+        for call in result.api_calls:
+            db_agent = "descriptor" if call.agent.startswith("tool/") else "agent_executor"
+            conn.execute(
+                """
+                INSERT INTO api_calls
+                    (call_type, agent, model_name, prompt_version_id, ig_media_id,
+                     input_tokens, output_tokens, cost_usd, latency_ms, simulation_run_id)
+                VALUES (%s, %s::agent_type, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    "classification",
+                    db_agent,
+                    call.model,
+                    None,
+                    result.ig_media_id,
+                    call.input_tokens,
+                    call.output_tokens,
+                    None,
+                    call.latency_ms,
+                    run_id,
+                ),
+            )
+
+        conn.execute(
+            """
+            INSERT INTO agent_traces
+                (simulation_run_id, ig_media_id,
+                 tool_calls, advisor_calls,
+                 input_tokens_executor, output_tokens_executor,
+                 input_tokens_advisor, output_tokens_advisor,
+                 input_tokens_descriptor, output_tokens_descriptor,
+                 latency_ms,
+                 category_label, category_confidence,
+                 visual_format_label, visual_format_confidence,
+                 strategy_label, strategy_confidence,
+                 trace,
+                 executor_requests, advisor_requests, example_calls, rate_limit_events,
+                 queue_wait_ms_executor,
+                 cache_creation_input_tokens_executor,
+                 cache_read_input_tokens_executor)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                    %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (simulation_run_id, ig_media_id) DO UPDATE SET
+                tool_calls = EXCLUDED.tool_calls,
+                advisor_calls = EXCLUDED.advisor_calls,
+                input_tokens_executor = EXCLUDED.input_tokens_executor,
+                output_tokens_executor = EXCLUDED.output_tokens_executor,
+                input_tokens_advisor = EXCLUDED.input_tokens_advisor,
+                output_tokens_advisor = EXCLUDED.output_tokens_advisor,
+                input_tokens_descriptor = EXCLUDED.input_tokens_descriptor,
+                output_tokens_descriptor = EXCLUDED.output_tokens_descriptor,
+                latency_ms = EXCLUDED.latency_ms,
+                category_label = EXCLUDED.category_label,
+                category_confidence = EXCLUDED.category_confidence,
+                visual_format_label = EXCLUDED.visual_format_label,
+                visual_format_confidence = EXCLUDED.visual_format_confidence,
+                strategy_label = EXCLUDED.strategy_label,
+                strategy_confidence = EXCLUDED.strategy_confidence,
+                trace = EXCLUDED.trace,
+                executor_requests = EXCLUDED.executor_requests,
+                advisor_requests = EXCLUDED.advisor_requests,
+                example_calls = EXCLUDED.example_calls,
+                rate_limit_events = EXCLUDED.rate_limit_events,
+                queue_wait_ms_executor = EXCLUDED.queue_wait_ms_executor,
+                cache_creation_input_tokens_executor = EXCLUDED.cache_creation_input_tokens_executor,
+                cache_read_input_tokens_executor = EXCLUDED.cache_read_input_tokens_executor
+            """,
+            (
+                run_id,
+                result.ig_media_id,
+                result.tool_calls,
+                result.advisor_calls,
+                tok_exec_in,
+                tok_exec_out,
+                tok_adv_in,
+                tok_adv_out,
+                tok_desc_in,
+                tok_desc_out,
+                result.latency_ms,
+                result.category.label,
+                result.category.confidence,
+                result.visual_format.label,
+                result.visual_format.confidence,
+                result.strategy.label,
+                result.strategy.confidence,
+                trace_json,
+                result.executor_requests,
+                result.advisor_requests,
+                result.example_calls,
+                result.rate_limit_events,
+                result.queue_wait_ms_executor,
+                result.cache_creation_input_tokens_executor,
+                result.cache_read_input_tokens_executor,
+            ),
+        )
+
+        for event in result.request_events:
+            conn.execute(
+                """
+                INSERT INTO llm_request_events
+                    (simulation_run_id, ig_media_id, provider, component, stage, attempt_index,
+                     request_id, status, model_name,
+                     estimated_input_tokens, actual_input_tokens, actual_output_tokens,
+                     cache_creation_input_tokens, cache_read_input_tokens,
+                     queue_wait_ms, latency_ms, retry_after_ms,
+                     rate_limit_headers, error_code)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s::jsonb, %s)
+                """,
+                (
+                    run_id,
+                    result.ig_media_id,
+                    event.provider,
+                    event.component,
+                    event.stage,
+                    event.attempt_index,
+                    event.request_id,
+                    event.status,
+                    event.model_name,
+                    event.estimated_input_tokens,
+                    event.actual_input_tokens,
+                    event.actual_output_tokens,
+                    event.cache_creation_input_tokens,
+                    event.cache_read_input_tokens,
+                    event.queue_wait_ms,
+                    event.latency_ms,
+                    event.retry_after_ms,
+                    json.dumps(event.rate_limit_headers or {}, ensure_ascii=False),
+                    event.error_code,
+                ),
+            )
 
     return matches
 
 
-# ── Main ──────────────────────────────────────────────────────────
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Évalue la pipeline agentique A0 sur le split test")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Évalue la pipeline agentique sur le split test")
     parser.add_argument("--limit", type=int, default=None, help="Limiter à N posts (pour tests)")
-    parser.add_argument("--workers", type=int, default=10, help="Nombre de posts en parallèle (défaut: 10, rate limiter adaptatif)")
+    parser.add_argument("--workers", type=int, default=10, help="Nombre de posts en parallèle")
     parser.add_argument("--dry-run", action="store_true", help="Afficher les posts sans classifier")
+    parser.add_argument(
+        "--pipeline-mode",
+        choices=["bounded", "legacy"],
+        default="bounded",
+        help="bounded=A1 agentic bounded, legacy=A0 rollback",
+    )
     args = parser.parse_args()
+
+    pipeline_name = "agent_a1_bounded" if args.pipeline_mode == "bounded" else "agent_a0"
+    run_name = "A1_agentic_bounded_test" if args.pipeline_mode == "bounded" else "A0_agent_haiku_opus_test"
 
     conn = get_conn()
     t0 = time.monotonic()
 
     log.info("=" * 60)
-    log.info("A0 — Pipeline agentique Haiku + Opus advisor (split test)")
+    log.info("%s — Pipeline agentique", "A1 bounded" if args.pipeline_mode == "bounded" else "A0 legacy")
     log.info("=" * 60)
     log.info("  executor  : %s", MODEL_EXECUTOR)
     log.info("  advisor   : %s", MODEL_ADVISOR)
     log.info("  descriptor: %s", MODEL_DESCRIPTOR)
+    log.info("  mode      : %s", args.pipeline_mode)
 
-    # 1. Posts test
     query = """
         SELECT p.ig_media_id, p.caption,
                p.media_type::text AS media_type,
@@ -230,86 +338,183 @@ def main():
     log.info("Posts test : %d", len(raw_posts))
 
     if args.dry_run:
-        for p in raw_posts[:10]:
-            log.info("  %s %s %s (%d)", p["ig_media_id"], p["media_product_type"],
-                     (p["caption"] or "")[:50], p["post_year"])
+        for post in raw_posts[:10]:
+            log.info(
+                "  %s %s %s (%d)",
+                post["ig_media_id"],
+                post["media_product_type"],
+                (post["caption"] or "")[:50],
+                post["post_year"],
+            )
         log.info("Dry run — pas de classification.")
+        conn.close()
         return
 
-    # 2. Simulation run
-    run_id = create_run(conn, {
-        "name": "A0_agent_haiku_opus_test",
-        "split": "test",
-        "pipeline": "agent_a0",
-        "models": {
-            "executor": MODEL_EXECUTOR,
-            "advisor": MODEL_ADVISOR,
-            "descriptor": MODEL_DESCRIPTOR,
+    run_id = create_run(
+        conn,
+        {
+            "name": run_name,
+            "split": "test",
+            "pipeline": pipeline_name,
+            "pipeline_mode": args.pipeline_mode,
+            "models": {
+                "executor": MODEL_EXECUTOR,
+                "advisor": MODEL_ADVISOR,
+                "descriptor": MODEL_DESCRIPTOR,
+            },
         },
-    })
+    )
     log.info("simulation_run id=%d", run_id)
 
-    # 3. Signature URLs GCS
     log.info("Signature des URLs GCS...")
     signed_by_post = sign_all_posts_media(raw_posts, load_post_media, conn, max_workers=20)
 
-    # 4. Charger les prompts descripteur (pour le tool describe_media)
     desc_feed = get_active_prompt(conn, "descriptor", "FEED")
     desc_reels = get_active_prompt(conn, "descriptor", "REELS")
     if not desc_feed or not desc_reels:
-        log.error("Prompts descripteur introuvables en BDD!")
+        log.error("Prompts descripteur introuvables en BDD.")
         fail_run(conn, run_id)
+        conn.close()
         sys.exit(1)
 
-    # Descriptions taxonomiques pour le descripteur
     vf_feed_desc = format_descriptions(load_visual_formats(conn, "FEED"))
     vf_reels_desc = format_descriptions(load_visual_formats(conn, "REELS"))
 
-    # 5. Classification parallèle
-    max_workers = args.workers
-    total = len(raw_posts)
-    log.info("Classification en cours (%d workers, rate limiter adaptatif)...", max_workers)
-
-    matches_total = {"category": 0, "visual_format": 0, "strategy": 0}
-    total_api_calls = 0
-    total_advisor_calls = 0
-    total_tool_calls = 0
-    errors = 0
-    done_count = 0
+    stats = ReporterStats()
     lock = threading.Lock()
+    stop_reporter = threading.Event()
+    write_queue: queue.Queue[tuple[int, dict, AgentResult] | None] = queue.Queue()
+    total = len(raw_posts)
 
-    def _progress_bar():
-        elapsed = time.monotonic() - t0
-        rate = done_count / elapsed if elapsed > 0 else 0
-        remaining = total - done_count
-        eta = remaining / rate if rate > 0 else 0
-        pct = done_count * 100 // total if total else 0
-        filled = done_count * 30 // total if total else 0
-        bar = "█" * filled + "░" * (30 - filled)
-        ok = done_count - errors
-        acc_cat = matches_total["category"] / ok * 100 if ok else 0
-        acc_vf = matches_total["visual_format"] / ok * 100 if ok else 0
-        acc_str = matches_total["strategy"] / ok * 100 if ok else 0
-        print(
-            f"\r  {bar} {done_count:>3}/{total} ({pct:>2}%) "
-            f"| {rate:.2f} posts/s "
-            f"| ETA {eta:.0f}s "
-            f"| err {errors} "
-            f"| cat {acc_cat:.0f}% vf {acc_vf:.0f}% str {acc_str:.0f}%",
-            end="", flush=True,
+    def _snapshot_line() -> str:
+        with lock:
+            started = stats.started
+            elapsed_min = max((time.monotonic() - t0) / 60.0, 1e-6)
+            completed = stats.completed
+            errors = stats.errors
+            in_flight_posts = stats.in_flight_posts
+            ok = max(1, completed)
+            acc_cat = stats.matches_total["category"] / ok * 100 if completed else 0.0
+            acc_vf = stats.matches_total["visual_format"] / ok * 100 if completed else 0.0
+            acc_str = stats.matches_total["strategy"] / ok * 100 if completed else 0.0
+            posts_per_min = completed / elapsed_min
+            executor_req_per_min = stats.total_executor_requests / elapsed_min
+            input_tok_per_min = stats.total_executor_input_tokens / elapsed_min
+            cache_hit_pct = (stats.executor_cache_hits / stats.executor_successes * 100) if stats.executor_successes else 0.0
+            advisor_hit_pct = (stats.posts_with_advisor / completed * 100) if completed else 0.0
+            p50_ms = int(statistics.median(stats.latencies_ms)) if stats.latencies_ms else 0
+            p95_ms = _percentile(stats.latencies_ms, 0.95)
+
+        limiter_snapshot = agent_pipeline._rate_limiter.snapshot()
+        return (
+            f"\rstarted {started:>3}/{total} | completed {completed:>3} | errors {errors:>2}"
+            f" | in_flight {in_flight_posts:>2}"
+            f" | executor_inflight {int(limiter_snapshot['inflight_requests']):>2}"
+            f" | waiting_rl {int(limiter_snapshot['waiters']):>2}"
+            f" | posts/min {posts_per_min:>5.1f}"
+            f" | exec req/min {executor_req_per_min:>6.1f}"
+            f" | input tok/min {input_tok_per_min:>7.0f}"
+            f" | cache hit {cache_hit_pct:>5.1f}%"
+            f" | advisor hit {advisor_hit_pct:>5.1f}%"
+            f" | p50/p95 {p50_ms:>4}/{p95_ms:>4} ms"
+            f" | bottleneck {limiter_snapshot['bottleneck']}"
+            f" | acc {acc_cat:>4.0f}/{acc_vf:>4.0f}/{acc_str:>4.0f}%"
         )
 
+    def _reporter_loop() -> None:
+        while not stop_reporter.is_set():
+            print(_snapshot_line(), end="", flush=True)
+            stop_reporter.wait(0.5)
+        print(_snapshot_line(), end="", flush=True)
+        print()
+
+    def _writer_loop() -> None:
+        writer_conn = get_conn()
+        batch: list[tuple[int, dict, AgentResult]] = []
+        batch_started = time.monotonic()
+        try:
+            while True:
+                timeout = max(0.0, 0.25 - (time.monotonic() - batch_started)) if batch else 0.25
+                try:
+                    item = write_queue.get(timeout=timeout)
+                except queue.Empty:
+                    item = None
+
+                if item is None:
+                    if batch:
+                        _flush_batch(writer_conn, batch)
+                        batch = []
+                    batch_started = time.monotonic()
+                    if stop_reporter.is_set():
+                        break
+                    continue
+
+                batch.append(item)
+                if len(batch) >= 10 or (time.monotonic() - batch_started) >= 0.25:
+                    _flush_batch(writer_conn, batch)
+                    batch = []
+                    batch_started = time.monotonic()
+        finally:
+            writer_conn.close()
+
+    def _flush_batch(writer_conn, items: list[tuple[int, dict, AgentResult]]) -> None:
+        for idx, post, result in items:
+            mid = post["ig_media_id"]
+            try:
+                post_matches = store_agent_results(writer_conn, result, run_id, pipeline_name)
+            except Exception as exc:
+                writer_conn.rollback()
+                log.error("store error %s: %s", mid, exc)
+                with lock:
+                    stats.errors += 1
+                continue
+
+            with lock:
+                stats.completed += 1
+                stats.total_api_calls += len(result.api_calls)
+                stats.total_advisor_calls += result.advisor_calls
+                stats.total_tool_calls += result.tool_calls
+                stats.total_executor_requests += result.executor_requests
+                stats.total_executor_input_tokens += (
+                    result.cache_creation_input_tokens_executor
+                    + result.cache_read_input_tokens_executor
+                    + sum(
+                        event.actual_input_tokens
+                        for event in result.request_events
+                        if event.component == "executor" and event.status == "success"
+                    )
+                )
+                stats.total_executor_cache_creation_tokens += result.cache_creation_input_tokens_executor
+                stats.total_executor_cache_read_tokens += result.cache_read_input_tokens_executor
+                stats.executor_successes += sum(
+                    1 for event in result.request_events if event.component == "executor" and event.status == "success"
+                )
+                stats.executor_cache_hits += sum(
+                    1
+                    for event in result.request_events
+                    if event.component == "executor"
+                    and event.status == "success"
+                    and event.cache_read_input_tokens > 0
+                )
+                stats.posts_with_advisor += 1 if result.advisor_calls > 0 else 0
+                stats.latencies_ms.append(result.latency_ms)
+                for axis in ("category", "visual_format", "strategy"):
+                    if post_matches[axis]:
+                        stats.matches_total[axis] += 1
+
     def _classify_one(idx: int, post: dict) -> tuple[int, dict, AgentResult | None]:
-        """Classifie un post dans un thread dédié (connexion BDD propre)."""
         mid = post["ig_media_id"]
         scope = post["media_product_type"]
-        signed = signed_by_post.get(mid, [])
+        with lock:
+            stats.started += 1
+            stats.in_flight_posts += 1
 
+        signed = signed_by_post.get(mid, [])
         if not signed:
             return idx, post, None
 
-        media_urls = [u for u, _ in signed]
-        media_types = [m for _, m in signed]
+        media_urls = [url for url, _ in signed]
+        media_types = [media_type for _, media_type in signed]
         desc_prompt = desc_feed if scope == "FEED" else desc_reels
         vf_desc = vf_feed_desc if scope == "FEED" else vf_reels_desc
 
@@ -325,86 +530,94 @@ def main():
 
         thread_conn = get_conn()
         try:
-            result = classify_post_agentic(mid, media_ctx, thread_conn)
+            result = classify_post_agentic(
+                mid,
+                media_ctx,
+                thread_conn,
+                pipeline_mode=args.pipeline_mode,
+            )
             return idx, post, result
         except Exception as exc:
-            log.error("  [%d/%d] %s ERREUR: %s", idx, total, mid, exc)
+            log.error("[%d/%d] %s ERREUR: %s", idx, total, mid, exc)
             return idx, post, None
         finally:
             thread_conn.close()
 
-    _progress_bar()  # afficher 0% immédiatement
+    reporter_thread = threading.Thread(target=_reporter_loop, name="progress-reporter", daemon=True)
+    writer_thread = threading.Thread(target=_writer_loop, name="result-writer", daemon=True)
+    reporter_thread.start()
+    writer_thread.start()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_classify_one, i + 1, post): post
-            for i, post in enumerate(raw_posts)
-        }
+    try:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {
+                pool.submit(_classify_one, index + 1, post): post
+                for index, post in enumerate(raw_posts)
+            }
 
-        for future in as_completed(futures):
-            idx, post, result = future.result()
-            mid = post["ig_media_id"]
-
-            with lock:
-                done_count += 1
+            for future in as_completed(futures):
+                idx, post, result = future.result()
+                with lock:
+                    stats.in_flight_posts = max(0, stats.in_flight_posts - 1)
 
                 if result is None:
-                    errors += 1
-                    _progress_bar()
+                    with lock:
+                        stats.errors += 1
                     continue
 
-                try:
-                    post_matches = store_agent_results(conn, result, run_id)
-                except Exception as exc:
-                    log.error("  store error %s: %s", mid, exc)
-                    conn.rollback()
-                    errors += 1
-                    _progress_bar()
-                    continue
-
-                for axis in ("category", "visual_format", "strategy"):
-                    if post_matches[axis]:
-                        matches_total[axis] += 1
-
-                total_api_calls += len(result.api_calls)
-                total_advisor_calls += result.advisor_calls
-                total_tool_calls += result.tool_calls
-                _progress_bar()
-
-    print()  # newline après la barre
-
-    # 6. Métriques
-    n = len(raw_posts) - errors
-    if n == 0:
-        log.error("Aucun post classifié!")
+                write_queue.put((idx, post, result))
+    except Exception:
+        stop_reporter.set()
+        write_queue.put(None)
+        writer_thread.join()
+        reporter_thread.join()
         fail_run(conn, run_id)
+        conn.close()
+        raise
+
+    stop_reporter.set()
+    write_queue.put(None)
+    writer_thread.join()
+    reporter_thread.join()
+
+    with lock:
+        completed = stats.completed
+        errors = stats.errors
+        matches_total = dict(stats.matches_total)
+        total_api_calls = stats.total_api_calls
+        total_advisor_calls = stats.total_advisor_calls
+        total_tool_calls = stats.total_tool_calls
+
+    if completed == 0:
+        log.error("Aucun post classifié.")
+        fail_run(conn, run_id)
+        conn.close()
         return
 
-    acc = {k: v / n for k, v in matches_total.items()}
-
-    finish_run(conn, run_id, {
-        "accuracy_category": acc["category"],
-        "accuracy_visual_format": acc["visual_format"],
-        "accuracy_strategy": acc["strategy"],
-        "total_api_calls": total_api_calls,
-    })
+    acc = {axis: matches_total[axis] / completed for axis in matches_total}
+    finish_run(
+        conn,
+        run_id,
+        {
+            "accuracy_category": acc["category"],
+            "accuracy_visual_format": acc["visual_format"],
+            "accuracy_strategy": acc["strategy"],
+            "total_api_calls": total_api_calls,
+        },
+    )
 
     elapsed = time.monotonic() - t0
-
     log.info("")
     log.info("=" * 60)
-    log.info("RÉSULTATS A0 — Pipeline agentique")
+    log.info("RÉSULTATS %s", "A1 bounded" if args.pipeline_mode == "bounded" else "A0 legacy")
     log.info("=" * 60)
-    log.info("  Posts classifiés : %d / %d (erreurs : %d)", n, len(raw_posts), errors)
+    log.info("  Posts classifiés : %d / %d (erreurs : %d)", completed, len(raw_posts), errors)
     log.info("  Appels API       : %d (tools: %d, advisor: %d)", total_api_calls, total_tool_calls, total_advisor_calls)
     log.info("  Durée            : %.0fs (%.1f min)", elapsed, elapsed / 60)
-    log.info("")
-    log.info("  Accuracy catégorie     : %.1f%% (%d/%d)", acc["category"] * 100, matches_total["category"], n)
-    log.info("  Accuracy visual_format : %.1f%% (%d/%d)", acc["visual_format"] * 100, matches_total["visual_format"], n)
-    log.info("  Accuracy stratégie     : %.1f%% (%d/%d)", acc["strategy"] * 100, matches_total["strategy"], n)
-    log.info("")
+    log.info("  Accuracy category     : %.1f%% (%d/%d)", acc["category"] * 100, matches_total["category"], completed)
+    log.info("  Accuracy visual_format: %.1f%% (%d/%d)", acc["visual_format"] * 100, matches_total["visual_format"], completed)
+    log.info("  Accuracy strategy     : %.1f%% (%d/%d)", acc["strategy"] * 100, matches_total["strategy"], completed)
     log.info("  simulation_run_id = %d", run_id)
-    log.info("✓ A0 terminé")
 
     conn.close()
 
