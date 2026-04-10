@@ -1439,6 +1439,10 @@ async def main():
 
             # Classifier le micro-batch en parallèle (avec timeout global)
             display.heartbeat("classifying batch")
+            def _on_post_done(done: int, total_batch: int, errors: int):
+                display.heartbeat(f"post {cursor + done}/{total}")
+                live.update(display.build())
+
             try:
                 batch_results = await asyncio.wait_for(
                     async_classify_batch(
@@ -1447,6 +1451,7 @@ async def main():
                         labels_by_scope=labels_by_scope,
                         max_concurrent_api=20,
                         max_concurrent_posts=args.micro_batch,
+                        on_progress=_on_post_done,
                     ),
                     timeout=BATCH_TIMEOUT,
                 )
