@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -30,6 +31,64 @@ from agents.tools import MediaContext, ToolPrompts, build_tools_for_phase, execu
 from milpo.db import get_active_prompt
 
 log = logging.getLogger("agents")
+
+
+# ── Rate limiter adaptatif ────────────────────────────────────────
+
+
+class AdaptiveRateLimiter:
+    """Token-based rate limiter avec sliding window de 60 secondes.
+
+    Permet de maximiser le throughput avec beaucoup de workers :
+    le limiter bloque automatiquement quand on approche la limite,
+    sans avoir à deviner le bon nombre de workers.
+    """
+
+    def __init__(self, max_tokens_per_minute: int = 50_000, safety_margin: float = 0.80):
+        self.limit = int(max_tokens_per_minute * safety_margin)
+        self._lock = threading.Lock()
+        self._entries: list[tuple[float, int]] = []
+
+    def _prune_and_usage(self) -> tuple[float, int]:
+        now = time.monotonic()
+        cutoff = now - 60.0
+        self._entries = [(t, n) for t, n in self._entries if t > cutoff]
+        return now, sum(n for _, n in self._entries)
+
+    def acquire(self, estimated_tokens: int = 5000) -> None:
+        """Bloque jusqu'à ce que estimated_tokens puisse être consommé."""
+        while True:
+            with self._lock:
+                now, usage = self._prune_and_usage()
+                if usage + estimated_tokens <= self.limit:
+                    self._entries.append((now, estimated_tokens))
+                    return
+
+                # Calcul du temps d'attente : quand assez de tokens expirent ?
+                needed = usage + estimated_tokens - self.limit
+                freed = 0
+                wait_until = now + 60
+                for t, n in sorted(self._entries):
+                    freed += n
+                    wait_until = t + 60.0
+                    if freed >= needed:
+                        break
+
+            sleep_time = max(0.5, wait_until - time.monotonic())
+            log.debug("  rate limiter: wait %.1fs (usage %d/%d)", sleep_time, usage, self.limit)
+            time.sleep(sleep_time)
+
+    def adjust(self, estimated: int, actual: int) -> None:
+        """Corrige l'estimation après l'appel API."""
+        diff = actual - estimated
+        if diff == 0:
+            return
+        with self._lock:
+            self._entries.append((time.monotonic(), diff))
+
+
+# Singleton global — partagé entre tous les threads/posts
+_rate_limiter = AdaptiveRateLimiter()
 
 
 # ── Structures de résultat ────────────────────────────────────────
@@ -132,8 +191,12 @@ def _run_agent_phase(
     for round_idx in range(MAX_TOOL_ROUNDS):
         t0 = time.monotonic()
 
-        # Retry avec backoff exponentiel sur les 429 (rate limit)
-        for attempt in range(5):
+        # Rate limiter adaptatif : attend si on approche la limite
+        estimated = 5000
+        _rate_limiter.acquire(estimated)
+
+        # Retry sur 429 résiduel (burst, contention)
+        for attempt in range(3):
             try:
                 response = client.beta.messages.create(
                     model=MODEL_EXECUTOR,
@@ -145,13 +208,16 @@ def _run_agent_phase(
                 )
                 break
             except anthropic.RateLimitError:
-                wait = 2 ** attempt * 15  # 15s, 30s, 60s, 120s, 240s
-                log.debug("  rate limit, retry in %ds (attempt %d/5)", wait, attempt + 1)
+                wait = 2 ** attempt * 10
                 time.sleep(wait)
         else:
-            raise anthropic.RateLimitError("rate limit épuisé après 5 retries")
+            raise anthropic.RateLimitError("rate limit épuisé après 3 retries")
 
         latency_ms = int((time.monotonic() - t0) * 1000)
+
+        # Corriger l'estimation avec les tokens réels
+        actual = response.usage.input_tokens if response.usage else estimated
+        _rate_limiter.adjust(estimated, actual)
 
         # Comptabiliser les tokens executor
         if response.usage:
