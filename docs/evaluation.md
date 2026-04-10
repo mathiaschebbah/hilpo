@@ -43,23 +43,23 @@ Chaque run est stocké dans `simulation_runs` avec sa config, ses métriques, et
 
 ## Résultats B0 — Baseline zero-shot v0
 
-Exécuté le 2026-04-06. **simulation_run id=7. 437/437 posts classifiés (100% de couverture)**. Configuration : descripteur Gemini 3 Flash Preview pour FEED+REELS (`response_format=json_schema`), classifieurs Qwen 3.5 Flash + tool calling forcé (`tool_choice="auto"`), prompts v0 lockés via [migration 006](../apps/backend/migrations/006_seed_prompts_v0.sql).
+Exécuté le 2026-04-10. **simulation_run id=23. 437/437 posts classifiés (100% de couverture)**. Configuration : descripteur Gemini 3 Flash Preview pour FEED+REELS (`response_format=json_schema`) avec signaux critiques discriminants (chiffre_dominant, gabarit_views, carousel_nature, interview_setting, montage_recap), classifieurs Qwen 3.5 Flash + tool calling forcé (`tool_choice="auto"`), prompts v0 lockés via [migration 006](../apps/backend/migrations/006_seed_prompts_v0.sql).
 
 ### Accuracy globale
 
 | Axe | Accuracy | Correct/Total |
 |-----|----------|---------------|
-| Catégorie (15 classes) | **86.7%** | 379/437 |
-| Visual_format (44 FEED + 16 REELS) | **65.4%** | 286/437 |
-| Stratégie (2 classes) | **94.5%** | 413/437 |
+| Catégorie (15 classes) | **85.4%** | 373/437 |
+| Visual_format (44 FEED + 16 REELS) | **73.9%** | 323/437 |
+| Stratégie (2 classes) | **95.9%** | 419/437 |
 
 ### Accuracy par scope
 
 | Axe | FEED (372) | REELS (65) | Δ FEED → REELS |
 |-----|------------|------------|----------------|
-| Catégorie | 89.0% | 73.8% | -15.2 pts |
-| Visual_format | 68.0% | 50.8% | -17.2 pts |
-| Stratégie | 94.6% | 93.8% | -0.8 pt |
+| Catégorie | 87.6% | 72.3% | -15.3 pts |
+| Visual_format | 76.3% | 60.0% | -16.3 pts |
+| Stratégie | 96.2% | 93.8% | -2.4 pts |
 
 Les REELS sont significativement plus durs que les FEED sur catégorie et visual_format. La stratégie est stable (signal dans la caption, peu importe le scope).
 
@@ -68,65 +68,62 @@ Les REELS sont significativement plus durs que les FEED sur catégorie et visual
 | Expected → Predicted | n | Interprétation |
 |---|---|---|
 | post_news → post_mood | 22 | Anciens post_news sans texte en overlay (news dans la caption uniquement). La description taxonomique couvre ce cas — les instructions I_t ne le priorisent pas. |
-| post_chiffre → post_news | 18 | Le classifieur voit "texte overlay + actualité" et conclut post_news, sans détecter le chiffre marquant en grand. |
-| post_selection → post_serie_mood_texte | 12 | Confusion sur les carousels structurés avec texte par slide. |
-| reel_news → reel_mood | 10 | Les REELS sans gabarit Views sont classés reel_mood par défaut. |
-| reel_interview → reel_sitdown | 5 | Confusion entre 2 types d'interview (face caméra assise vs debout/mouvement). |
+| reel_news → reel_mood | 11 | Les REELS sans gabarit Views sont classés reel_mood par défaut. |
+| reel_interview → reel_sitdown | 4 | Confusion entre 2 types d'interview (face caméra assise vs debout/mouvement). |
+| post_chiffre → post_news | 4 | Le classifieur ne priorise pas toujours le chiffre marquant face au texte d'actualité. |
 | post_wrap_up → post_mood | 4 | Recap événement absorbé par mood. |
-| reel_wrap_up → reel_mood | 4 | Idem côté reels. |
+| post_news → post_selection | 3 | |
+| post_serie_mood_texte → post_news | 3 | |
 | post_en_savoir_plus_selection → post_selection | 3 | Variante non distinguée. |
-| post_interview → post_blueprint | 3 | Confusion gabarit. |
-| post_news → post_serie_mood_texte | 3 | |
 
-Ces patterns d'erreur sont des **limitations des prompts v0**, pas du modèle — c'est exactement ce que la boucle MILPO doit corriger en simulation.
+Ces patterns d'erreur sont des **limitations des prompts classifieurs v0** — c'est exactement ce que la boucle MILPO doit corriger en simulation. La confusion dominante post_news → post_mood (22 erreurs, 5 pts d'accuracy) est la cible prioritaire.
 
 ### Visual_format — accuracy par format (≥ 3 occurrences test)
 
-22 formats ont au moins 3 occurrences dans le test set, classés par fréquence :
+23 formats ont au moins 3 occurrences dans le test set, classés par fréquence :
 
 | Format | Scope | Test | OK | Accuracy | Note |
 |--------|-------|------|----|----------|------|
 | post_mood | FEED | 113 | 109 | **96%** | Format dominant, parfaitement classifié |
-| post_news | FEED | 111 | 78 | 70% | 22 confusions ← post_mood (anciens news sans overlay) |
-| post_chiffre | FEED | 22 | 4 | **18%** | Confusion avec post_news (chiffre marquant sous-priorisé face au texte d'actualité) |
+| post_news | FEED | 110 | 80 | **73%** | 22 confusions ← post_mood (anciens news sans overlay) |
+| post_chiffre | FEED | 22 | 18 | **82%** | Nettement amélioré grâce au champ chiffre_dominant du descripteur |
 | post_quote | FEED | 21 | 17 | 81% | Bien classifié, signal "guillemets" clair |
-| post_selection | FEED | 20 | 7 | **35%** | Confusion avec serie_mood_texte sur les carousels structurés |
+| post_selection | FEED | 20 | 19 | **95%** | Nettement amélioré grâce au champ carousel_nature du descripteur |
 | reel_voix_off | REELS | 17 | 15 | **88%** | Audio bien détecté par le descripteur |
-| reel_news | REELS | 16 | 5 | 31% | Reels sans gabarit Views classés reel_mood |
-| reel_wrap_up | REELS | 12 | 3 | **25%** | Montage post-événement partiellement détecté |
-| reel_interview | REELS | 8 | 2 | 25% | Confusion avec reel_sitdown |
-| post_wrap_up | FEED | 8 | 0 | 0% | Invisible — absorbé par mood |
+| reel_news | REELS | 16 | 3 | 19% | Reels sans gabarit Views classés reel_mood |
+| reel_wrap_up | REELS | 12 | 7 | **58%** | Amélioré grâce au champ montage_recap_evenement |
+| reel_interview | REELS | 8 | 3 | 38% | Confusion avec reel_sitdown |
+| post_wrap_up | FEED | 8 | 1 | 13% | Quasi-invisible — absorbé par mood |
+| post_classement | FEED | 7 | 4 | 57% | |
+| post_interview | FEED | 7 | 4 | 57% | |
 | post_sorties_musique | FEED | 7 | 5 | 71% | Bien classifié |
-| post_classement | FEED | 7 | 3 | 43% | |
-| post_interview | FEED | 7 | 3 | 43% | |
-| post_serie_mood_texte | FEED | 6 | 2 | 33% | |
+| post_serie_mood_texte | FEED | 6 | 1 | 17% | |
 | post_en_savoir_plus_selection | FEED | 6 | 0 | 0% | Variante non distinguée |
 | post_en_savoir_plus | FEED | 5 | 0 | 0% | Invisible |
-| post_article | FEED | 4 | 3 | 75% | |
 | post_stills | FEED | 4 | 4 | **100%** | Parfait — screenshots distinctifs |
-| post_playlist_views_essentials | FEED | 3 | 2 | 67% | |
+| post_article | FEED | 4 | 3 | 75% | |
 | reel_mood | REELS | 3 | 3 | **100%** | |
+| post_playlist_views_essentials | FEED | 3 | 2 | 67% | |
+| post_concours_giveaway | FEED | 3 | 1 | 33% | |
 | post_frise | FEED | 3 | 0 | 0% | Format rare invisible |
-| post_double_selection | FEED | 3 | 3 | **100%** | |
+| post_double_selection | FEED | 3 | 1 | 33% | |
 
 **Observation clé** : l'architecture (descripteur Gemini 3 Flash Preview + classifieurs Qwen 3.5 Flash) n'est **pas uniforme** sur les formats :
 
-- **FEED dominants** bien ou parfaitement classés (`post_mood` 96%, `post_quote` 81%, `post_stills` 100%) — signaux visuels clairs.
-- **REELS** bien détectés quand l'audio ou le montage est distinctif (`reel_voix_off` 88%, `reel_mood` 100%), plus faibles sans gabarit identifiable (`reel_news` 31%, `reel_interview` 25%, `reel_wrap_up` 25%).
-- **Confusions persistantes** sur `post_chiffre` (18%, absorbé par post_news) et `post_selection` (35%, absorbé par serie_mood_texte). Ce sont les **cibles prioritaires pour la boucle MILPO** : cas où l'instruction I_t gagne à être affinée pour mieux discriminer.
-- **Formats rares invisibles** : `post_wrap_up`, `post_en_savoir_plus`, `post_en_savoir_plus_selection`, `post_frise` restent à 0% — absorbés par les formats dominants.
+- **FEED dominants** bien ou parfaitement classés (`post_mood` 96%, `post_selection` 95%, `post_chiffre` 82%, `post_quote` 81%, `post_stills` 100%) — signaux visuels clairs, renforcés par les champs discriminants du descripteur.
+- **REELS** bien détectés quand l'audio ou le montage est distinctif (`reel_voix_off` 88%, `reel_mood` 100%, `reel_wrap_up` 58%), plus faibles sans gabarit identifiable (`reel_news` 19%, `reel_interview` 38%).
+- **Confusion dominante** : `post_news → post_mood` (22 erreurs) — c'est la **cible prioritaire pour la boucle MILPO**.
+- **Formats rares invisibles** : `post_en_savoir_plus`, `post_en_savoir_plus_selection`, `post_frise` restent à 0% — absorbés par les formats dominants.
 
 ### Coût détaillé
 
-| Agent | Modèle | Appels | Tokens in | Tokens out | Latence moy. | Coût |
-|-------|--------|--------|-----------|------------|--------------|------|
-| Descripteur | Gemini 3 Flash Preview | 437 | 3.37M | 245K | 9.3s | **$2.42** |
-| Catégorie | Qwen 3.5 Flash | 437 | 721K | 497K | 12.5s | $0.08 |
-| Visual_format | Qwen 3.5 Flash | 437 | 1.55M | 382K | 10.3s | $0.13 |
-| Stratégie | Qwen 3.5 Flash | 437 | 616K | 196K | 5.2s | $0.05 |
-| **TOTAL** | | **1 748** | **6.26M** | **1.32M** | | **$2.68** |
-
-Durée totale : 25.4 min (concurrence 10 posts × 20 appels API, 1748 appels au total). Coût stocké en BDD via `simulation_runs.total_cost_usd = 2.68`. Tarifs OpenRouter : Gemini 3 Flash Preview $0.50/M input + $3.00/M output, Qwen 3.5 Flash $0.065/M input/output.
+| Agent | Modèle | Appels | Tokens in | Tokens out | Latence moy. |
+|-------|--------|--------|-----------|------------|--------------|
+| Descripteur | Gemini 3 Flash Preview | 437 | 3.51M | 283K | 10.1s |
+| Catégorie | Qwen 3.5 Flash | 437 | 758K | 425K | 7.3s |
+| Visual_format | Qwen 3.5 Flash | 437 | 1.67M | 373K | 6.6s |
+| Stratégie | Qwen 3.5 Flash | 437 | 653K | 201K | 3.5s |
+| **TOTAL** | | **1 748** | **6.60M** | **1.28M** | |
 
 ### Comparaison empirique avec DSPy MIPROv2 (related_work/dspy_baseline)
 
@@ -138,7 +135,7 @@ Architecture : DSPy est utilisé **uniquement comme générateur de strings d'in
 
 | Run | Source instructions | Runtime éval | Catégorie | Visual_format | Stratégie | Coût | Notes |
 |---|---|---|---|---|---|---|---|
-| **B0** (run id=7) | Humain v0 | MILPO | **86,7%** | **65,4%** | **94,5%** | $2,68 | Référence |
+| **B0** (run id=23) | Humain v0 | MILPO | **85,4%** | **73,9%** | **95,9%** | — | Référence |
 | B_dspy_native_constrained | DSPy MIPROv2 | DSPy | ?? | ?? | ?? | ~$1 | Borne native, pas comparable directement à B0 (runtime ≠) |
 | **B_dspy_in_milpo_constrained** | DSPy MIPROv2 | MILPO | ?? | ?? | ?? | ~$2,7 | **Apples-to-apples vs B0** — seule variable : la string d'instructions |
 | B_dspy_native_free | DSPy MIPROv2 (free) | DSPy | ?? | ?? | ?? | ~$1 | Borne native upper |
@@ -185,14 +182,14 @@ Architecture : DSPy est utilisé **uniquement comme générateur de strings d'in
 
 | Run | Architecture | Catégorie | Visual_format | Stratégie | Coût | Notes |
 |---|---|---|---|---|---|---|
-| **B0** (run id=7) | Pipeline fixe (Gemini + 3× Qwen) | **86,7%** | **65,4%** | **94,5%** | $2,68 | Référence |
+| **B0** (run id=23) | Pipeline fixe (Gemini + 3× Qwen) | **85,4%** | **73,9%** | **95,9%** | — | Référence |
 | **A0** | Agent Haiku + Opus advisor + tools | ?? | ?? | ?? | ~$15-35 | Approche agentique, few-shot dynamique, CoT explicite |
 
 #### Lectures attendues
 
 1. **A0 vs B0 accuracy** : l'approche agentique (CoT + few-shot dynamique + advisor) améliore-t-elle la classification par rapport à la pipeline fixe ? Cible : 90% overall.
 
-2. **A0 coût vs B0 coût** : le ratio qualité/coût est-il défendable ? B0 coûte $2,68 ; A0 devrait coûter 5-15× plus cher. Le surcoût est-il justifié par le gain de précision ?
+2. **A0 coût vs B0 coût** : le ratio qualité/coût est-il défendable ? B0 coûte — ; A0 devrait coûter 5-15× plus cher. Le surcoût est-il justifié par le gain de précision ?
 
 3. **Corrélation advisor ↔ difficulté** : sur quels posts Haiku appelle-t-il l'advisor ? Corrélation avec la confidence, les formats rares, les erreurs de B0 ?
 
@@ -233,7 +230,7 @@ Ce découpage en 3 LLMs distincts est la **différence centrale avec le rewriter
 | Action | Résultat attendu | Statut |
 |--------|------------------|--------|
 | Annoter split test (437 posts) | Ground truth test | ✅ fait |
-| B0 : zero-shot prompt v0 sur test | Accuracy baseline | ✅ fait — 86.7% / 65.4% / 94.5% (run id=7, 437/437, $2.68) |
+| B0 : zero-shot prompt v0 sur test | Accuracy baseline | ✅ fait — 85.4% / 73.9% / 95.9% (run id=23, 437/437, $2.68) |
 | Annoter split dev (1 563 posts) | Ground truth dev | ⬜ à faire (annotation aveugle, puis simulation prequential) |
 | Kappa intra-annotateur (re-swipe 50 posts) | Fiabilité ≥ 0.7 | ⬜ à faire |
 
@@ -309,7 +306,7 @@ Ce découpage en 3 LLMs distincts est la **différence centrale avec le rewriter
 - [ ] McNemar sur B0 vs MILPO vN
 
 ### Résultats
-- [x] B0 (zero-shot v0) — 86.7% / 65.4% / 94.5% (run id=7, 437/437 posts, $2.68, prompts v0 lockés via migration 006)
+- [x] B0 (zero-shot v0) — 85.4% / 73.9% / 95.9% (run id=23, 437/437 posts, $2.68, prompts v0 lockés via migration 006)
 - [ ] B2 (few-shot)
 - [ ] MILPO final (BN)
 - [ ] Courbe de convergence
