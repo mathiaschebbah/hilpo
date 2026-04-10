@@ -1426,7 +1426,7 @@ def main():
         log.info("")
         log.info("  simulation_run_id = %d", run_id)
         log.info("✓ Simulation terminée")
-    except Exception as exc:
+    except BaseException as exc:
         print()
         log.exception("[FATAL] Simulation interrompue: %s", exc)
         if run_id is not None:
