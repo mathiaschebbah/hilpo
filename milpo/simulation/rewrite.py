@@ -30,6 +30,17 @@ log = logging.getLogger("simulation")
 INCUMBENT_ARM_ID = 0
 
 
+def _align_candidate_arms(
+    candidate_arms: dict[int, list[bool]],
+) -> dict[int, list[bool]]:
+    """Aligne les bras candidats pour SR : retire les vides, tronque au min."""
+    non_empty = {aid: m for aid, m in candidate_arms.items() if m}
+    if not non_empty:
+        return {}
+    min_len = min(len(m) for m in non_empty.values())
+    return {aid: m[:min_len] for aid, m in non_empty.items()}
+
+
 def pick_rewrite_target(error_buffer: list[ErrorCase]) -> tuple[str, str | None]:
     """Choisit (agent, scope) avec le plus d'erreurs dans le buffer."""
     counts: Counter[tuple[str, str | None]] = Counter()
@@ -366,6 +377,20 @@ async def run_protegi_rewrite(
 
     if not candidate_arms:
         log.warning("[REWRITE #%d] (protegi) aucun bras candidat évaluable.", rewrite_count)
+        return RewriteOutcome(
+            triggered=True,
+            promoted=False,
+            winner_db_id=None,
+            incumbent_acc=inc_acc,
+            candidate_acc=None,
+            eval_window_consumed=len(eval_posts),
+            incumbent_records=multi_result.incumbent_records,
+            failed=False,
+        )
+
+    candidate_arms = _align_candidate_arms(candidate_arms)
+    if not candidate_arms:
+        log.warning("[REWRITE #%d] (protegi) aucun bras avec résultats après alignement.", rewrite_count)
         return RewriteOutcome(
             triggered=True,
             promoted=False,
