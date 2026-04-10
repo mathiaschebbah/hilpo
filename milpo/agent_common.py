@@ -21,10 +21,8 @@ def build_descriptor_messages(
 
     content: list[dict] = []
     for url, media_type in zip(media_urls, media_types):
-        if media_type == "VIDEO":
-            content.append({"type": "video_url", "video_url": {"url": url}})
-        else:
-            content.append({"type": "image_url", "image_url": {"url": url}})
+        # Gemini via l'endpoint OpenAI-compatible accepte les vidéos comme image_url
+        content.append({"type": "image_url", "image_url": {"url": url}})
 
     content.append({
         "type": "text",
