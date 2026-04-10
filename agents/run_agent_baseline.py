@@ -268,7 +268,7 @@ def main():
     # 5. Classification parallèle
     max_workers = args.workers
     total = len(raw_posts)
-    log.info("Classification en cours (%d workers)...", max_workers)
+    log.info("Classification en cours (%d workers, rate limiter adaptatif)...", max_workers)
 
     matches_total = {"category": 0, "visual_format": 0, "strategy": 0}
     total_api_calls = 0
@@ -332,6 +332,8 @@ def main():
             return idx, post, None
         finally:
             thread_conn.close()
+
+    _progress_bar()  # afficher 0% immédiatement
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
