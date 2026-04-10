@@ -72,7 +72,9 @@ class SimulationDisplay:
     def _fmt_tok(n: int) -> str:
         if n >= 1_000_000:
             return f"{n / 1_000_000:.1f}M"
-        return f"{n / 1_000:.1f}K"
+        if n >= 1_000:
+            return f"{n / 1_000:.1f}K"
+        return str(n)
 
     def add_api_log(
         self,
