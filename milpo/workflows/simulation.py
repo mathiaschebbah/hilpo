@@ -248,7 +248,7 @@ async def run_simulation(args) -> int:
         display.n_by_scope = n_by_scope
         emit_telemetry(display)
 
-        batch_timeout = 120
+        batch_timeout = 240
         with Live(display.build(), refresh_per_second=2, console=console, screen=True) as live:
             async def _with_heartbeat(coro, label="rewrite..."):
                 """Run a coroutine with periodic 2s heartbeat updates."""
@@ -408,10 +408,10 @@ async def run_simulation(args) -> int:
                                 labels_by_scope,
                                 on_status=_on_rewrite_status,
                             )),
-                            timeout=300,
+                            timeout=600,
                         )
                     except asyncio.TimeoutError:
-                        display.add_event(f"REWRITE #{rewrite_count} TIMEOUT (300s)")
+                        display.add_event(f"REWRITE #{rewrite_count} TIMEOUT (600s)")
                         outcome = RewriteOutcome(
                             triggered=True,
                             promoted=False,

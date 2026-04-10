@@ -329,7 +329,7 @@ async def run_protegi_rewrite(
                 labels_by_scope=labels_by_scope,
                 on_progress=_on_eval_progress,
             ),
-            timeout=300,
+            timeout=600,
         )
     except (LLMCallError, asyncio.TimeoutError) as exc:
         log.warning("[REWRITE #%d] (protegi) Échec multi_evaluate : %s", rewrite_count, exc)
