@@ -75,6 +75,7 @@ class DescriptorFeatures(StrictBaseModel):
     audio_video: AudioVideo
     analyse_caption: AnalyseCaption
     indices_brand_content: IndicesBrandContent
+    elements_discriminants: list[str] | None = None  # flèches, badges, icônes, éléments visuels distinctifs
 
 
 # ── Résultat de classification d'un post ───────────────────────
