@@ -29,7 +29,7 @@ from milpo.db import (
     load_strategies,
     load_visual_formats,
 )
-from milpo.schemas import DescriptorFeatures, build_json_schema_response_format
+from milpo.schemas import build_json_schema_response_format
 
 from agents.config import (
     ADVISOR_CACHE_TTL,
@@ -359,7 +359,6 @@ class MediaContext:
         self.post_year = post_year
         self.descriptor_instructions = descriptor_instructions
         self.descriptor_descriptions = descriptor_descriptions
-        self._cached_features: DescriptorFeatures | None = None
         self._cached_features_json: str | None = None
         self._descriptor_prefetch_future: Future[tuple[str, dict]] | None = None
         self._descriptor_prefetch_result: tuple[str, dict] | None = None
@@ -408,11 +407,6 @@ def execute_describe_media(
         )
         content.append({"type": "text", "text": f"Caption du post :\n{caption_text}"})
 
-        response_format = build_json_schema_response_format(
-            "descriptor_features",
-            DescriptorFeatures.model_json_schema(),
-        )
-
         t0 = time.monotonic()
         response = client.chat.completions.create(
             model=MODEL_DESCRIPTOR,
@@ -420,17 +414,13 @@ def execute_describe_media(
                 {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
-            response_format=response_format,
             temperature=0.1,
         )
 
         raw = response.choices[0].message.content or ""
-        features = DescriptorFeatures.model_validate_json(raw)
-        features_json = features.model_dump_json(indent=2)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        media_ctx._cached_features = features
-        media_ctx._cached_features_json = features_json
+        media_ctx._cached_features_json = raw
 
         usage = response.usage
         api_usage = {
@@ -439,7 +429,7 @@ def execute_describe_media(
             "latency_ms": latency_ms,
             "model": MODEL_DESCRIPTOR,
         }
-        return features_json, api_usage
+        return raw, api_usage
 
     else:
         # Mode focus (texte libre) — prompt chargé depuis BDD

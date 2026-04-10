@@ -6,61 +6,10 @@ from unittest.mock import AsyncMock, patch
 
 from milpo.async_inference import async_classify_post, async_classify_with_features
 from milpo.inference import ApiCallLog, PostInput, PromptSet
-from milpo.schemas import DescriptorFeatures
 
 
-def _features() -> DescriptorFeatures:
-    return DescriptorFeatures.model_validate({
-        "resume_visuel": "resume",
-        "texte_overlay": {
-            "present": True,
-            "type": "titre_editorial",
-            "contenu_resume": "headline",
-            "chiffre_dominant": False,
-        },
-        "logos": {
-            "views": True,
-            "specifique": None,
-            "marque_partenaire": None,
-            "gabarit_views_identifie": True,
-        },
-        "mise_en_page": {
-            "fond": "photo_plein_cadre",
-            "nombre_slides": 1,
-            "structure": "slide_unique",
-            "carousel_nature": "non_carousel",
-        },
-        "contenu_principal": {
-            "personnes_visibles": False,
-            "type_personne": None,
-            "screenshots_film": False,
-            "pochettes_album": False,
-            "zoom_objet": False,
-            "photos_evenement": False,
-            "chiffre_marquant_visible": False,
-        },
-        "audio_video": {
-            "voix_off_narrative": False,
-            "interview_face_camera": False,
-            "interview_setting": None,
-            "musique_dominante": False,
-            "type_montage": None,
-            "montage_recap_evenement": False,
-        },
-        "analyse_caption": {
-            "longueur": 10,
-            "mentions_marques": [],
-            "hashtags_format": None,
-            "mention_partenariat": False,
-            "sujet_resume": "topic",
-        },
-        "indices_brand_content": {
-            "produit_mis_en_avant": False,
-            "mention_partenariat_caption": False,
-            "logo_marque_commerciale": False,
-        },
-        "elements_discriminants": [],
-    })
+def _features() -> str:
+    return "Slide 1 : Photo plein cadre, titre editorial Views overlay, logo Views en haut à gauche, gabarit reconnaissable."
 
 
 def _prompt_set() -> PromptSet:
@@ -137,6 +86,13 @@ class AsyncInferenceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.prediction.ig_media_id, 1)
         self.assertEqual(result.prediction.strategy, "awareness")
+
+
+class FeaturesToJsonTests(unittest.TestCase):
+    def test_features_to_json_is_identity_for_string(self) -> None:
+        from milpo.inference_core import features_to_json
+        text = "Slide 1 : Photo plein cadre, overlay Views."
+        self.assertEqual(features_to_json(text), text)
 
 
 if __name__ == "__main__":

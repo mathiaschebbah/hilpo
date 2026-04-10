@@ -13,11 +13,7 @@ from milpo.agent_common import (
     parse_classifier_arguments,
 )
 from milpo.errors import LLMCallError
-from milpo.schemas import (
-    DescriptorFeatures,
-    build_classifier_tool,
-    build_json_schema_response_format,
-)
+from milpo.schemas import build_classifier_tool
 
 log = logging.getLogger("milpo")
 
@@ -37,18 +33,14 @@ def call_descriptor(
     caption: str | None,
     instructions: str,
     descriptions_taxonomiques: str,
-) -> tuple[DescriptorFeatures, dict]:
-    """Appelle le descripteur multimodal et retourne les features."""
+) -> tuple[str, dict]:
+    """Appelle le descripteur multimodal et retourne l'analyse textuelle."""
     messages = build_descriptor_messages(
         media_urls,
         media_types,
         caption,
         instructions,
         descriptions_taxonomiques,
-    )
-    response_format = build_json_schema_response_format(
-        "descriptor_features",
-        DescriptorFeatures.model_json_schema(),
     )
 
     start = time.monotonic()
@@ -59,20 +51,18 @@ def call_descriptor(
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                response_format=response_format,
                 temperature=0.1,
             )
             if not response.choices:
                 raise RuntimeError("Descriptor: réponse vide")
 
             raw = response.choices[0].message.content
-            if not raw:
+            if not raw or not raw.strip():
                 raise RuntimeError("Descriptor: content vide")
 
-            features = DescriptorFeatures.model_validate_json(raw)
             latency_ms = int((time.monotonic() - start) * 1000)
             usage = response.usage
-            return features, {
+            return raw, {
                 "input_tokens": usage.prompt_tokens if usage else 0,
                 "output_tokens": usage.completion_tokens if usage else 0,
                 "latency_ms": latency_ms,

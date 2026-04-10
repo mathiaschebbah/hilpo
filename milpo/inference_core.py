@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from milpo.schemas import DescriptorFeatures, PostPrediction
+from milpo.schemas import PostPrediction
 
 
 def build_classifier_specs(
@@ -30,14 +30,14 @@ def build_classifier_specs(
     }
 
 
-def features_to_json(features: DescriptorFeatures) -> str:
-    return features.model_dump_json(indent=2)
+def features_to_json(features: str) -> str:
+    return features
 
 
 def build_post_prediction(
     *,
     ig_media_id: int,
-    features: DescriptorFeatures,
+    features: str,
     labels_by_axis: dict[str, str],
 ) -> PostPrediction:
     return PostPrediction(

@@ -53,7 +53,11 @@ def build_prompt_set(
         category_instructions=prompt_contents[("category", None)],
         visual_format_instructions=prompt_contents[("visual_format", scope)],
         strategy_instructions=prompt_contents[("strategy", None)],
-        descriptor_descriptions=format_descriptions(vf),
+        descriptor_descriptions=(
+            "## Formats visuels\n\n" + format_descriptions(vf)
+            + "\n\n## Catégories\n\n" + format_descriptions(cats)
+            + "\n\n## Stratégies\n\n" + format_descriptions(strats)
+        ),
         category_descriptions=format_descriptions(cats),
         visual_format_descriptions=format_descriptions(vf),
         strategy_descriptions=format_descriptions(strats),
@@ -138,7 +142,11 @@ def load_descriptor_prompt_configs(conn, source: str = "human_v0") -> dict[str, 
             raise RuntimeError(f"Prompt descripteur introuvable pour scope={scope}")
         out[scope] = {
             "instructions": record["content"],
-            "descriptions": format_descriptions(load_visual_formats(conn, scope)),
+            "descriptions": (
+                "## Formats visuels\n\n" + format_descriptions(load_visual_formats(conn, scope))
+                + "\n\n## Catégories\n\n" + format_descriptions(load_categories(conn))
+                + "\n\n## Stratégies\n\n" + format_descriptions(load_strategies(conn))
+            ),
             "id": record["id"],
         }
     return out

@@ -19,61 +19,8 @@ from milpo.persistence.runs import (
     finish_run,
     get_or_create_extraction_run,
 )
-from milpo.schemas import DescriptorFeatures
-
-
-def _features() -> DescriptorFeatures:
-    return DescriptorFeatures.model_validate({
-        "resume_visuel": "resume",
-        "texte_overlay": {
-            "present": True,
-            "type": "titre_editorial",
-            "contenu_resume": "headline",
-            "chiffre_dominant": False,
-        },
-        "logos": {
-            "views": True,
-            "specifique": None,
-            "marque_partenaire": None,
-            "gabarit_views_identifie": True,
-        },
-        "mise_en_page": {
-            "fond": "photo_plein_cadre",
-            "nombre_slides": 1,
-            "structure": "slide_unique",
-            "carousel_nature": "non_carousel",
-        },
-        "contenu_principal": {
-            "personnes_visibles": False,
-            "type_personne": None,
-            "screenshots_film": False,
-            "pochettes_album": False,
-            "zoom_objet": False,
-            "photos_evenement": False,
-            "chiffre_marquant_visible": False,
-        },
-        "audio_video": {
-            "voix_off_narrative": False,
-            "interview_face_camera": False,
-            "interview_setting": None,
-            "musique_dominante": False,
-            "type_montage": None,
-            "montage_recap_evenement": False,
-        },
-        "analyse_caption": {
-            "longueur": 10,
-            "mentions_marques": [],
-            "hashtags_format": None,
-            "mention_partenariat": False,
-            "sujet_resume": "topic",
-        },
-        "indices_brand_content": {
-            "produit_mis_en_avant": False,
-            "mention_partenariat_caption": False,
-            "logo_marque_commerciale": False,
-        },
-        "elements_discriminants": [],
-    })
+def _features() -> str:
+    return "Slide 1 : Photo plein cadre, titre editorial Views overlay, logo Views."
 
 
 # ── resolve_prompt_id ──────────────────────────────────────────

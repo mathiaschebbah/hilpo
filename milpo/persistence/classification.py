@@ -36,7 +36,7 @@ def persist_pipeline_predictions(
             axis,
             prompt_id,
             getattr(pred, axis),
-            raw_response=pred.features.model_dump() if axis == "visual_format" else None,
+            raw_response={"text": pred.features} if axis == "visual_format" else None,
             simulation_run_id=run_id,
         )
 
@@ -49,7 +49,7 @@ def persist_pipeline_predictions(
                 "descriptor",
                 desc_prompt_id,
                 "features_extracted",
-                raw_response=pred.features.model_dump(),
+                raw_response={"text": pred.features},
                 simulation_run_id=run_id,
             )
 

@@ -188,7 +188,7 @@ async def run_feature_cache(args) -> int:
                 agent="descriptor",
                 prompt_version_id=descriptor_prompt_id,
                 predicted_value="features_extracted",
-                raw_response=features.model_dump(),
+                raw_response={"text": features},
                 simulation_run_id=run_id,
             )
             store_api_call(

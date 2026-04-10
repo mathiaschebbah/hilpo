@@ -82,7 +82,7 @@ def _format_error_batch(errors: list[ErrorCase]) -> str:
         lines.append(f"- **Caption** : {(e.caption or '(vide)')[:300]}")
         lines.append(f"- **Description label prédit** : {e.desc_predicted}")
         lines.append(f"- **Description label attendu** : {e.desc_expected}")
-        lines.append(f"- **Features extraites** :\n```json\n{e.features_json[:1500]}\n```")
+        lines.append(f"- **Analyse du descripteur** :\n{e.features_json[:1500]}")
         lines.append("")
     return "\n".join(lines)
 

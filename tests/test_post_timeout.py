@@ -37,26 +37,8 @@ def _make_classify_post_mock(slow_ids: set[int], delay: float = 10.0):
                     strategy_labels, client, semaphore):
         if post.ig_media_id in slow_ids:
             await asyncio.sleep(delay)
-        from milpo.schemas import DescriptorFeatures, PostPrediction
-        features = DescriptorFeatures.model_validate({
-            "resume_visuel": "r", "texte_overlay": {"present": False, "type": None,
-            "contenu_resume": None, "chiffre_dominant": False},
-            "logos": {"views": True, "specifique": None, "marque_partenaire": None,
-            "gabarit_views_identifie": False},
-            "mise_en_page": {"fond": "couleur_unie", "nombre_slides": 1,
-            "structure": "slide_unique", "carousel_nature": "non_carousel"},
-            "contenu_principal": {"personnes_visibles": False, "type_personne": None,
-            "screenshots_film": False, "pochettes_album": False, "zoom_objet": False,
-            "photos_evenement": False, "chiffre_marquant_visible": False},
-            "audio_video": {"voix_off_narrative": False, "interview_face_camera": False,
-            "interview_setting": None, "musique_dominante": False, "type_montage": None,
-            "montage_recap_evenement": False},
-            "analyse_caption": {"longueur": 5, "mentions_marques": [],
-            "hashtags_format": None, "mention_partenariat": False, "sujet_resume": "t"},
-            "indices_brand_content": {"produit_mis_en_avant": False,
-            "mention_partenariat_caption": False, "logo_marque_commerciale": False},
-            "elements_discriminants": [],
-        })
+        from milpo.schemas import PostPrediction
+        features = "Slide 1 : Photo couleur unie, logo Views."
         from milpo.inference import PipelineResult
         pred = PostPrediction(ig_media_id=post.ig_media_id, category="news",
                               visual_format="post_news", strategy="awareness",

@@ -22,11 +22,7 @@ from milpo.inference_core import (
     features_to_json,
 )
 from milpo.router import route
-from milpo.schemas import (
-    DescriptorFeatures,
-    build_classifier_tool,
-    build_json_schema_response_format,
-)
+from milpo.schemas import build_classifier_tool
 
 log = logging.getLogger("milpo")
 
@@ -58,17 +54,13 @@ async def async_call_descriptor(
     instructions: str,
     descriptions_taxonomiques: str,
     semaphore: asyncio.Semaphore,
-) -> tuple[DescriptorFeatures, ApiCallLog]:
+) -> tuple[str, ApiCallLog]:
     messages = build_descriptor_messages(
         media_urls,
         media_types,
         caption,
         instructions,
         descriptions_taxonomiques,
-    )
-    response_format = build_json_schema_response_format(
-        "descriptor_features",
-        DescriptorFeatures.model_json_schema(),
     )
 
     max_retries = 3
@@ -79,7 +71,6 @@ async def async_call_descriptor(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    response_format=response_format,
                     temperature=0.1,
                 )
             except Exception as exc:
@@ -98,28 +89,19 @@ async def async_call_descriptor(
             raise RuntimeError("Descriptor: réponse vide après retries")
 
         raw = response.choices[0].message.content
-        if not raw:
+        if not raw or not raw.strip():
             log.warning("Descriptor content vide (attempt %d)", attempt + 1)
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
                 continue
             raise RuntimeError("Descriptor: content vide après retries")
 
-        try:
-            features = DescriptorFeatures.model_validate_json(raw)
-        except Exception as exc:
-            log.warning("Descriptor JSON invalide (attempt %d): %s", attempt + 1, exc)
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            raise RuntimeError("Descriptor: JSON invalide après retries") from exc
-
         usage = response.usage
         in_tok = usage.prompt_tokens if usage else 0
         out_tok = usage.completion_tokens if usage else 0
         if _on_api_call:
             _on_api_call("descriptor", model, latency_ms, in_tok, out_tok, "ok")
-        return features, ApiCallLog(
+        return raw, ApiCallLog(
             agent="descriptor",
             model=model,
             input_tokens=in_tok,
@@ -244,7 +226,7 @@ async def async_call_classifier(
 async def _async_classify_from_features(
     post: PostInput,
     *,
-    features: DescriptorFeatures,
+    features: str,
     api_calls: list[ApiCallLog],
     prompts: PromptSet,
     category_labels: list[str],
@@ -328,7 +310,7 @@ async def async_classify_post(
 
 async def async_classify_with_features(
     post: PostInput,
-    features: DescriptorFeatures,
+    features: str,
     desc_log: ApiCallLog,
     prompts: PromptSet,
     category_labels: list[str],
@@ -353,7 +335,7 @@ async def async_classify_with_features(
 
 async def async_classify_target_only(
     post: PostInput,
-    features: DescriptorFeatures,
+    features: str,
     target_axis: str,
     target_labels: list[str],
     target_instructions: str,

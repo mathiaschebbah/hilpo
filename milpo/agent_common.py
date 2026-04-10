@@ -59,8 +59,8 @@ def build_classifier_messages(
     )
 
     user_text = (
-        f"## Features extraites du post\n\n"
-        f"```json\n{features_json}\n```\n\n"
+        f"## Analyse du post\n\n"
+        f"{features_json}\n\n"
         f"## Caption du post\n\n"
         f"{caption or '(pas de caption)'}"
     )

@@ -19,7 +19,6 @@ from milpo.persistence import persist_api_calls, persist_pipeline_predictions, r
 from milpo.prompting import build_prompt_set
 from milpo.rewriter import ErrorCase
 from milpo.router import route as route_post
-from milpo.schemas import DescriptorFeatures
 from milpo.simulation.state import MatchRecord, MultiEvalResult, PromptState
 
 log = logging.getLogger("simulation")
@@ -77,7 +76,7 @@ def evaluate_result_and_store(
                 post_scope=scope,
                 predicted=predicted,
                 expected=expected,
-                features_json=pred.features.model_dump_json(indent=2),
+                features_json=pred.features,
                 caption=post.caption,
                 desc_predicted=_get_label_description(conn, axis, predicted),
                 desc_expected=_get_label_description(conn, axis, expected),
@@ -197,7 +196,7 @@ async def async_multi_evaluate(
         return_exceptions=True,
     )
 
-    features_by_id: dict[int, tuple[DescriptorFeatures, ApiCallLog]] = {}
+    features_by_id: dict[int, tuple[str, ApiCallLog]] = {}
     for item in desc_results:
         if isinstance(item, Exception):
             log.warning("Descripteur échoué dans multi_evaluate: %s", item)
@@ -205,7 +204,30 @@ async def async_multi_evaluate(
         post_id, features, desc_log = item
         features_by_id[post_id] = (features, desc_log)
 
-    target_labels_list = labels_by_scope[target_scope or "FEED"][target_agent]
+    is_descriptor_target = target_agent == "descriptor"
+    target_labels_list = None if is_descriptor_target else labels_by_scope[target_scope or "FEED"][target_agent]
+
+    async def classify_candidate_descriptor(offset: int, post: PostInput, annotation: dict, arm_id: int):
+        """Re-describe + re-classify all 3 axes with candidate descriptor instructions."""
+        prompts = prompts_cache[(arm_id, post.media_product_type)]
+        routing = route_post(post.media_product_type)
+        features, desc_log = await async_call_descriptor(
+            client=client,
+            model=routing["model_descriptor"],
+            media_urls=post.media_urls,
+            media_types=post.media_types,
+            caption=post.caption,
+            instructions=prompts.descriptor_instructions,
+            descriptions_taxonomiques=prompts.descriptor_descriptions,
+            semaphore=semaphore,
+        )
+        labels = labels_by_scope[post.media_product_type]
+        result = await async_classify_with_features(
+            post, features, desc_log, prompts,
+            labels["category"], labels["visual_format"], labels["strategy"],
+            client, semaphore,
+        )
+        return (offset, post, annotation, arm_id, result, False, False)
 
     async def classify_mismatch(offset: int, post: PostInput, annotation: dict):
         if post.ig_media_id not in features_by_id:
@@ -279,7 +301,10 @@ async def async_multi_evaluate(
         tasks.append(classify_incumbent(offset, post, annotation))
         for arm_id in arms:
             if arm_id != incumbent_arm_id:
-                tasks.append(classify_candidate(offset, post, annotation, arm_id))
+                if is_descriptor_target:
+                    tasks.append(classify_candidate_descriptor(offset, post, annotation, arm_id))
+                else:
+                    tasks.append(classify_candidate(offset, post, annotation, arm_id))
 
     eval_total = len(tasks) + len(all_posts)
     eval_done = len([item for item in desc_results if not isinstance(item, Exception)])

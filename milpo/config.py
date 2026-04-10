@@ -18,19 +18,9 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Modèles
 #
-# Descripteurs : Gemini 3 Flash Preview pour FEED et REELS.
-# Validation empirique (2026-04-06) :
-#   - Carousels jusqu'à 20 images : ✓ (limite Instagram actuelle)
-#   - Vidéos REELS via URL GCS : ✓
-#   - Détection audio (voix_off_narrative) : ✓
-#   - Concurrence (10 parallèles, 2 vagues) : 18/18 ✓
-# Alternatives écartées :
-#   - Qwen 3.5 Flash : limite carousel ~8 images, échec sur 10+ slides
-#   - Gemini 2.5 Flash : réponses vides + 503 sous concurrence (Google AI Studio)
-# Les 2 constantes restent séparées pour permettre une éventuelle re-différenciation
-# future, mais elles pointent actuellement vers le même modèle.
-MODEL_DESCRIPTOR_FEED = "google/gemini-3-flash-preview"
-MODEL_DESCRIPTOR_REELS = "google/gemini-3-flash-preview"
+# Descripteurs : Gemini 3.1 Flash Lite — analyse textuelle libre (plus de JSON structuré).
+MODEL_DESCRIPTOR_FEED = "google/gemini-3.1-flash-lite-preview"
+MODEL_DESCRIPTOR_REELS = "google/gemini-3.1-flash-lite-preview"
 
 # Classifieurs : Qwen 3.5 Flash text-only via tool calling forcé
 # (cf. commit 0b3bd8b — fix après bug json_schema strict sur enums binaires).
