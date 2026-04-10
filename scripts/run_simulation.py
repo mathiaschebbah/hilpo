@@ -1349,41 +1349,21 @@ async def main():
     skipped_classification_posts = 0
     failed_rewrite_attempts = 0
 
+    # Silence TOUT le logging pendant l'exécution (la TUI remplace les logs)
+    import warnings
+    warnings.filterwarnings("ignore")
+    logging.getLogger().setLevel(logging.ERROR)
+
     try:
-        # ── Header ──
-        log.info("=" * 60)
-        log.info("  MILPO — Simulation prequential ProTeGi")
-        log.info("  B=%d  delta=%.0f%%  patience=%d  eval_window=%d",
-                 args.batch_size, args.delta * 100, args.patience, args.eval_window)
-        log.info("  PROTEGI: m=%d c=%d p=%d (critic=%s editor=%s paraphraser=%s)",
-                 args.protegi_m, args.protegi_c, args.protegi_p,
-                 MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER)
-        if args.dry_run:
-            log.info("  MODE: dry-run (pas de rewrite)")
-        if args.no_rollback:
-            log.info("  MODE: no-rollback (ablation A5)")
-        log.info("=" * 60)
-
-        # ── 1. Charger les posts dev ──
+        # ── 1-5. Setup silencieux ──
         raw_posts = load_dev_posts(conn, limit=args.limit)
-        log.info("Posts dev chargés : %d", len(raw_posts))
-
-        # ── 2. Charger les annotations ──
         annotations = load_dev_annotations(conn)
-        log.info("Annotations dev : %d", len(annotations))
-
-        # Filtrer les posts non annotés
         annotated_ids = set(annotations.keys())
         raw_posts = [p for p in raw_posts if p["ig_media_id"] in annotated_ids]
-        if len(raw_posts) < len(annotated_ids):
-            log.warning("  %d posts sans annotation — ignorés", len(annotated_ids) - len(raw_posts))
-        log.info("Posts à traiter : %d", len(raw_posts))
-
         if not raw_posts:
-            log.error("Aucun post annoté dans le split dev. Annote d'abord !")
+            console.print("[red]Aucun post annoté dans le split dev.[/red]")
             sys.exit(1)
 
-        # ── 3. Simulation run ──
         run_config: dict = {
             "name": f"MILPO_protegi_B{args.batch_size}"
                     + ("_dryrun" if args.dry_run else ""),
@@ -1404,19 +1384,14 @@ async def main():
             },
         }
         run_id = create_run(conn, run_config)
-        log.info("simulation_run id=%d", run_id)
 
-        # ── 4. Signer les URLs GCS ──
-        log.info("Signature des URLs GCS (expiration 120min)...")
         signed_by_post = sign_all_posts_media(raw_posts, load_post_media, conn, max_workers=20)
 
         post_inputs: list[PostInput] = []
-        skipped_signed_urls = 0
         for post in raw_posts:
             mid = post["ig_media_id"]
             signed = signed_by_post.get(mid, [])
             if not signed:
-                skipped_signed_urls += 1
                 continue
             post_inputs.append(PostInput(
                 ig_media_id=mid,
@@ -1426,12 +1401,6 @@ async def main():
                 caption=post["caption"],
             ))
 
-        feed = sum(1 for p in post_inputs if p.media_product_type == "FEED")
-        reels = len(post_inputs) - feed
-        log.info("Prêts : %d (FEED %d / REELS %d) — %d skippés", len(post_inputs), feed, reels, skipped_signed_urls)
-
-        # ── 5. Initialiser les prompts depuis la BDD ──
-        log.info("Chargement des prompts actifs depuis la BDD...")
         prompt_state = load_prompt_state_from_db(conn)
 
         # ── 6. Labels et descriptions par scope (cache) ──
@@ -1447,11 +1416,17 @@ async def main():
         rewrites_stopped = False
 
         total = len(post_inputs)
+        feed = sum(1 for p in post_inputs if p.media_product_type == "FEED")
         display = SimulationDisplay(run_id=run_id, total=total, batch_size=args.batch_size)
+        display.add_event(f"Loaded {total} posts (FEED {feed} / REELS {total - feed})")
+        display.add_event(
+            f"Config B={args.batch_size} delta={args.delta*100:.0f}% "
+            f"patience={args.patience} m={args.protegi_m} c={args.protegi_c} p={args.protegi_p}"
+        )
 
-        # Silence les logs pendant le Live (tout passe par display.add_event)
-        log.setLevel(logging.WARNING)
-        with Live(display.build(), refresh_per_second=2, console=console) as live:
+        BATCH_TIMEOUT = 120  # secondes max par micro-batch avant skip
+
+        with Live(display.build(), refresh_per_second=2, console=console, screen=True) as live:
           while cursor < total:
             # Construire les prompts par scope pour ce batch (basé sur prompt_state actuel)
             prompts_by_scope: dict[str, PromptSet] = {}
@@ -1462,14 +1437,25 @@ async def main():
             batch_end = min(cursor + args.micro_batch, total)
             micro_batch = post_inputs[cursor:batch_end]
 
-            # Classifier le micro-batch en parallèle via async_classify_batch
-            batch_results = await async_classify_batch(
-                posts=micro_batch,
-                prompts_by_scope=prompts_by_scope,
-                labels_by_scope=labels_by_scope,
-                max_concurrent_api=20,
-                max_concurrent_posts=args.micro_batch,
-            )
+            # Classifier le micro-batch en parallèle (avec timeout global)
+            display.heartbeat("classifying batch")
+            try:
+                batch_results = await asyncio.wait_for(
+                    async_classify_batch(
+                        posts=micro_batch,
+                        prompts_by_scope=prompts_by_scope,
+                        labels_by_scope=labels_by_scope,
+                        max_concurrent_api=20,
+                        max_concurrent_posts=args.micro_batch,
+                    ),
+                    timeout=BATCH_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                display.add_event(f"TIMEOUT batch {cursor}-{batch_end} ({BATCH_TIMEOUT}s) — skipped")
+                skipped_classification_posts += len(micro_batch)
+                cursor = batch_end
+                live.update(display.build())
+                continue
 
             # Créer un mapping post -> result pour gérer les échecs
             results_by_id = {r.prediction.ig_media_id: r for r in batch_results}
@@ -1516,6 +1502,7 @@ async def main():
                 display.add_event(f"{batch_skipped} post(s) skipped (LLM error)")
 
             # Mettre à jour le display
+            display.heartbeat(f"batch done {cursor}/{total}")
             display.sync(cursor, n_processed, matches_by_axis,
                          len(error_buffer), live_cost_estimate_usd, prompt_state.versions)
             display.total_input_tokens = total_input_tokens
@@ -1634,7 +1621,8 @@ async def main():
                     live.update(display.build())
                     rewrites_stopped = True
 
-        # Restaurer le logging pour le résumé final
+        # Restaurer le logging pour le résumé final (hors Live / plein écran)
+        logging.getLogger().setLevel(logging.INFO)
         log.setLevel(logging.INFO)
 
         metrics = build_run_metrics(matches_by_axis, n_processed, rewrite_count, total_api_calls)

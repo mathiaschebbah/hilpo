@@ -37,6 +37,10 @@ class SimulationDisplay:
         self.total_input_tokens: int = 0
         self.total_output_tokens: int = 0
 
+        # Heartbeat : dernière activité
+        self.last_activity = time.monotonic()
+        self.last_activity_label = "init"
+
         # Accuracy FEED/REELS
         self.matches_by_scope: dict[str, dict[str, int]] = {
             "FEED": {"category": 0, "visual_format": 0, "strategy": 0},
@@ -44,9 +48,15 @@ class SimulationDisplay:
         }
         self.n_by_scope: dict[str, int] = {"FEED": 0, "REELS": 0}
 
+    def heartbeat(self, label: str = ""):
+        self.last_activity = time.monotonic()
+        if label:
+            self.last_activity_label = label
+
     def add_event(self, msg: str):
         ts = datetime.now().strftime("%H:%M:%S")
         self.events.appendleft(f"{ts}  {msg}")
+        self.heartbeat(msg[:30])
 
     def set_rewrite_phase(self, sub_phase: str | None):
         self.rewrite_sub_phase = sub_phase
@@ -100,7 +110,16 @@ class SimulationDisplay:
                     f"vf={ms['visual_format'] / ns * 100:.0f}%  "
                     f"str={ms['strategy'] / ns * 100:.0f}%"
                 )
-        lines.append(f" Prompts    v{max_v}    Buffer err={self.error_count}/{self.batch_size}")
+        # Heartbeat : temps depuis dernière activité
+        idle = time.monotonic() - self.last_activity
+        if idle > 30:
+            idle_str = f"[bold red]IDLE {int(idle)}s[/bold red] ({self.last_activity_label})"
+        elif idle > 10:
+            idle_str = f"[yellow]idle {int(idle)}s[/yellow]"
+        else:
+            idle_str = f"[green]active[/green]"
+
+        lines.append(f" Prompts    v{max_v}    Buffer err={self.error_count}/{self.batch_size}    {idle_str}")
         if self.phase != "classification":
             lines.append(f" [bold cyan]{self.phase}[/bold cyan]")
             if self.rewrite_sub_phase:
