@@ -19,7 +19,8 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from milpo.db import (
     format_descriptions,
@@ -127,12 +128,16 @@ def store_agent_results(
         row = conn.execute("SELECT match FROM predictions WHERE id = %s", (pid,)).fetchone()
         matches[axis] = bool(row and row["match"])
 
-    # Stocker les api_calls
+    # Stocker les api_calls — mapper vers agent_type enum valide
     for call in result.api_calls:
+        if call.agent.startswith("tool/describe"):
+            db_agent = "descriptor"
+        else:
+            db_agent = "agent_executor"
         store_api_call(
             conn,
             call_type="classification",
-            agent=call.agent,
+            agent=db_agent,
             model_name=call.model,
             prompt_version_id=None,
             ig_media_id=result.ig_media_id,
@@ -193,6 +198,7 @@ def store_agent_results(
 def main():
     parser = argparse.ArgumentParser(description="Évalue la pipeline agentique A0 sur le split test")
     parser.add_argument("--limit", type=int, default=None, help="Limiter à N posts (pour tests)")
+    parser.add_argument("--workers", type=int, default=10, help="Nombre de posts classifiés en parallèle (défaut: 10)")
     parser.add_argument("--dry-run", action="store_true", help="Afficher les posts sans classifier")
     args = parser.parse_args()
 
@@ -259,8 +265,9 @@ def main():
     vf_feed_desc = format_descriptions(load_visual_formats(conn, "FEED"))
     vf_reels_desc = format_descriptions(load_visual_formats(conn, "REELS"))
 
-    # 5. Classification séquentielle
-    log.info("Classification en cours (séquentiel, 1 post à la fois)...")
+    # 5. Classification parallèle (10 posts concurrents)
+    max_workers = args.workers
+    log.info("Classification en cours (%d workers parallèles)...", max_workers)
     log.info("")
 
     matches_total = {"category": 0, "visual_format": 0, "strategy": 0}
@@ -268,21 +275,21 @@ def main():
     total_advisor_calls = 0
     total_tool_calls = 0
     errors = 0
+    done_count = 0
+    lock = threading.Lock()
 
-    for i, post in enumerate(raw_posts):
+    def _classify_one(idx: int, post: dict) -> tuple[int, dict, AgentResult | None]:
+        """Classifie un post dans un thread dédié (connexion BDD propre)."""
         mid = post["ig_media_id"]
         scope = post["media_product_type"]
         signed = signed_by_post.get(mid, [])
 
         if not signed:
-            log.warning("  [%d/%d] %s — pas de médias signés, skip", i + 1, len(raw_posts), mid)
-            errors += 1
-            continue
+            log.warning("  [%d/%d] %s — pas de médias signés, skip", idx, len(raw_posts), mid)
+            return idx, post, None
 
-        # Construire le MediaContext
         media_urls = [u for u, _ in signed]
         media_types = [m for _, m in signed]
-
         desc_prompt = desc_feed if scope == "FEED" else desc_reels
         vf_desc = vf_feed_desc if scope == "FEED" else vf_reels_desc
 
@@ -296,38 +303,61 @@ def main():
             descriptor_descriptions=vf_desc,
         )
 
-        log.info("  [%d/%d] %s (%s, %d)", i + 1, len(raw_posts), mid, scope, post["post_year"])
-
+        # Connexion BDD dédiée par thread (psycopg n'est pas thread-safe)
+        thread_conn = get_conn()
         try:
-            result = classify_post_agentic(mid, media_ctx, conn)
-
-            # Stocker les résultats
-            post_matches = store_agent_results(conn, result, run_id)
-
-            for axis in ("category", "visual_format", "strategy"):
-                if post_matches[axis]:
-                    matches_total[axis] += 1
-
-            total_api_calls += len(result.api_calls)
-            total_advisor_calls += result.advisor_calls
-            total_tool_calls += result.tool_calls
-
-            match_str = " ".join(
-                f"{'✓' if post_matches[a] else '✗'}{a[0].upper()}"
-                for a in ("category", "visual_format", "strategy")
-            )
-            log.info("    %s | cat=%s vf=%s strat=%s | tools=%d adv=%d",
-                     match_str,
-                     result.category.label,
-                     result.visual_format.label,
-                     result.strategy.label,
-                     result.tool_calls,
-                     result.advisor_calls)
-
+            result = classify_post_agentic(mid, media_ctx, thread_conn)
+            return idx, post, result
         except Exception as exc:
-            log.error("    ERREUR: %s", exc)
-            errors += 1
-            continue
+            log.error("  [%d/%d] %s ERREUR: %s", idx, len(raw_posts), mid, exc)
+            return idx, post, None
+        finally:
+            thread_conn.close()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_classify_one, i + 1, post): post
+            for i, post in enumerate(raw_posts)
+        }
+
+        for future in as_completed(futures):
+            idx, post, result = future.result()
+            mid = post["ig_media_id"]
+
+            with lock:
+                done_count += 1
+
+                if result is None:
+                    errors += 1
+                    continue
+
+                try:
+                    post_matches = store_agent_results(conn, result, run_id)
+                except Exception as exc:
+                    log.error("  [%d/%d] %s store error: %s", idx, len(raw_posts), mid, exc)
+                    conn.rollback()
+                    errors += 1
+                    continue
+
+                for axis in ("category", "visual_format", "strategy"):
+                    if post_matches[axis]:
+                        matches_total[axis] += 1
+
+                total_api_calls += len(result.api_calls)
+                total_advisor_calls += result.advisor_calls
+                total_tool_calls += result.tool_calls
+
+                match_str = " ".join(
+                    f"{'✓' if post_matches[a] else '✗'}{a[0].upper()}"
+                    for a in ("category", "visual_format", "strategy")
+                )
+                log.info("  [%d/%d] %s | %s | cat=%s vf=%s strat=%s | tools=%d adv=%d",
+                         done_count, len(raw_posts), mid, match_str,
+                         result.category.label,
+                         result.visual_format.label,
+                         result.strategy.label,
+                         result.tool_calls,
+                         result.advisor_calls)
 
     # 6. Métriques
     n = len(raw_posts) - errors
