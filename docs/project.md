@@ -28,10 +28,6 @@ MILPO se positionne comme une **adaptation méthodologique** de ProTeGi (Pryzant
 
 3. **Pipeline production-ready et reproductible.** MILPO est implémenté de bout en bout : annotation par interface swipe (frontend React), backend FastAPI, BDD PostgreSQL versionnée par migrations, signature GCS V4 pour les médias privés, prompts versionnés et tracés par run de simulation, ablations rejouables sans réannotation. L'ensemble est open-source et documenté pour reproduction (voir [REPRODUCE.md](../REPRODUCE.md)).
 
-## Claim visé
-
-> Nous adaptons l'optimiseur de prompt par gradient textuel (ProTeGi, Pryzant et al. 2023) à un pipeline de classification multimodale industriel chez le média Views. Sur le corpus Instagram de Views, avec un budget d'annotation manuelle limité (≈10% du dataset, réparti en splits dev/test figés), nous évaluons MILPO sur 3 axes de classification (60 formats visuels en scope FEED/REELS, 15 catégories éditoriales, 2 stratégies Organic/Brand Content). Le baseline B0 (prompts v0 zero-shot, run id=7 en BDD) atteint **86,7% / 65,4% / 94,5%** (catégorie / format visuel / stratégie) sur le split test. Nous étudions empiriquement (i) l'effet de l'optimisation MILPO sur ces accuracies, (ii) l'efficacité en annotations (combien d'annotations pour atteindre un plateau de performance ?), (iii) la robustesse au transfert (conservation des gains sur le split test non vu pendant l'optimisation), et (iv) la sensibilité à la taille de batch (ablations B=1, 10, 30, 50). L'analyse qualitative documente quels types d'erreurs sont corrigés par la boucle d'optimisation et lesquels résistent — en particulier sur les formats à faible support (longue traîne).
-
 ## Contraintes
 
 - **Deadline mémoire** : 18 avril 2026
