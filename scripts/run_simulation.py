@@ -21,6 +21,7 @@ Variables d'environnement (chargées depuis .env) :
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -29,6 +30,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+from milpo.async_inference import async_classify_batch, async_classify_post, get_async_client
 from milpo.bandits import successive_rejects
 from milpo.config import MODEL_CRITIC, MODEL_EDITOR, MODEL_PARAPHRASER
 from milpo.db import (
@@ -386,6 +388,84 @@ def _get_label_description(conn, axis: str, label: str, scope: str) -> str:
     return desc
 
 
+def evaluate_result_and_store(
+    post: PostInput,
+    result: PipelineResult,
+    annotation: dict,
+    prompt_state: PromptState,
+    conn,
+    run_id: int,
+    call_type: str = "classification",
+) -> tuple[list[ErrorCase], list[MatchRecord]]:
+    """Évalue un résultat déjà classifié et stocke en BDD.
+
+    Séparation de classify_and_store pour permettre la classification async
+    en batch suivie du stockage séquentiel.
+    """
+    scope = post.media_product_type
+    pred = result.prediction
+
+    errors: list[ErrorCase] = []
+    matches: list[MatchRecord] = []
+
+    for axis in ("category", "visual_format", "strategy"):
+        predicted = getattr(pred, axis)
+        expected = annotation[axis]
+        is_match = predicted == expected
+
+        # Prompt id pour cet axe
+        scope_key = scope if axis in ("visual_format", "descriptor") else None
+        prompt_id = prompt_state.db_ids.get((axis, scope_key)) or prompt_state.db_ids.get((axis, None))
+
+        store_prediction(
+            conn, pred.ig_media_id, axis, prompt_id,
+            predicted,
+            raw_response=pred.features.model_dump() if axis == "visual_format" else None,
+            simulation_run_id=run_id,
+        )
+        matches.append(MatchRecord(axis=axis, match=is_match, cursor=0))
+
+        if not is_match:
+            # Charger les descriptions des labels
+            desc_predicted = _get_label_description(conn, axis, predicted, scope)
+            desc_expected = _get_label_description(conn, axis, expected, scope)
+            errors.append(ErrorCase(
+                ig_media_id=pred.ig_media_id,
+                axis=axis,
+                prompt_scope=scope if axis == "visual_format" else None,
+                post_scope=scope,
+                predicted=predicted,
+                expected=expected,
+                features_json=pred.features.model_dump_json(indent=2),
+                caption=post.caption,
+                desc_predicted=desc_predicted,
+                desc_expected=desc_expected,
+            ))
+
+    # Stocker descripteur
+    desc_prompt_id = prompt_state.db_ids.get(("descriptor", scope))
+    if desc_prompt_id:
+        store_prediction(
+            conn, pred.ig_media_id, "descriptor", desc_prompt_id,
+            "features_extracted",
+            raw_response=pred.features.model_dump(),
+            simulation_run_id=run_id,
+        )
+
+    # Stocker api_calls
+    for call in result.api_calls:
+        scope_key = scope if call.agent in ("descriptor", "visual_format") else None
+        prompt_id = prompt_state.db_ids.get((call.agent, scope_key)) or prompt_state.db_ids.get((call.agent, None))
+        store_api_call(
+            conn, call_type, call.agent, call.model, prompt_id,
+            pred.ig_media_id,
+            call.input_tokens, call.output_tokens, None, call.latency_ms,
+            run_id,
+        )
+
+    return errors, matches
+
+
 # ── Sélection de la cible du rewrite ─────────────────────────
 
 
@@ -514,7 +594,7 @@ def _build_all_descriptions_for_target(
 # ── Multi-évaluation pour le mode protegi ─────────────────────
 
 
-def multi_evaluate(
+async def async_multi_evaluate(
     eval_posts: list[PostInput],
     annotations: dict[int, dict],
     start_cursor: int,
@@ -526,15 +606,12 @@ def multi_evaluate(
     conn,
     run_id: int,
     labels_by_scope: dict[str, dict[str, list[str]]],
-    eval_pool_size: int = 5,
+    max_concurrent_api: int = 20,
 ) -> MultiEvalResult:
     """Évalue N bras (incumbent + candidats) sur eval_posts en parallèle.
 
-    Pour chaque post : déroule en parallèle une instance de classify_post par
-    bras (chacune avec son propre PromptSet où la cible est remplacée par les
-    instructions du bras). Le pipeline interne (descripteur + 3 classifieurs)
-    est dupliqué par bras — c'est inefficient mais simple, et la cible étant
-    presque toujours un classifieur dans la pratique, le surcoût reste borné.
+    Version async : parallélise à la fois les posts ET les bras pour un gain
+    de ~5-10x par rapport à l'ancienne version séquentielle sur les posts.
 
     Args:
         arms: {arm_id: (instructions, prompt_db_id)} — inclut l'incumbent sous
@@ -552,9 +629,6 @@ def multi_evaluate(
             f"multi_evaluate: incumbent_arm_id={incumbent_arm_id} absent de arms"
         )
 
-    matches_by_arm: dict[int, list[bool]] = {arm_id: [] for arm_id in arms}
-    incumbent_records: list[MatchRecord] = []
-
     # Construire un PromptState par bras (cache hors boucle posts)
     arm_states: dict[int, PromptState] = {}
     for arm_id, (instructions, db_id) in arms.items():
@@ -570,29 +644,94 @@ def multi_evaluate(
             versions=base_prompt_state.versions.copy(),
         )
 
+    # Séparer posts par cas : scope-mismatch (incumbent seul) vs normal (tous les bras)
+    mismatch_posts: list[tuple[int, PostInput, dict]] = []  # (offset, post, annotation)
+    normal_posts: list[tuple[int, PostInput, dict]] = []
+
     for offset, post in enumerate(eval_posts):
         annotation = annotations.get(post.ig_media_id)
         if not annotation:
             continue
+        scope = post.media_product_type
+        if target_scope is not None and scope != target_scope:
+            mismatch_posts.append((offset, post, annotation))
+        else:
+            normal_posts.append((offset, post, annotation))
 
+    # Préparer les structures de résultat
+    matches_by_arm: dict[int, list[bool]] = {arm_id: [] for arm_id in arms}
+    incumbent_records: list[MatchRecord] = []
+    # Stocker les résultats bruts pour traitement séquentiel BDD après
+    raw_results: list[tuple[int, PostInput, dict, int, PipelineResult]] = []  # (offset, post, annotation, arm_id, result)
+
+    client = get_async_client()
+    semaphore = asyncio.Semaphore(max_concurrent_api)
+
+    # ── 1. Traiter les posts mismatch en parallèle (incumbent seulement) ──
+    async def classify_mismatch(offset: int, post: PostInput, annotation: dict):
+        scope = post.media_product_type
+        labels = labels_by_scope[scope]
+        inc_state = arm_states[incumbent_arm_id]
+        prompts = build_prompts_from_state(inc_state, conn, scope)
+        result = await async_classify_post(
+            post, prompts,
+            labels["category"], labels["visual_format"], labels["strategy"],
+            client, semaphore,
+        )
+        return (offset, post, annotation, incumbent_arm_id, result, True)  # True = mismatch
+
+    # ── 2. Traiter les posts normaux × tous les bras en parallèle ──
+    async def classify_normal(offset: int, post: PostInput, annotation: dict, arm_id: int):
+        scope = post.media_product_type
+        labels = labels_by_scope[scope]
+        state = arm_states[arm_id]
+        prompts = build_prompts_from_state(state, conn, scope)
+        result = await async_classify_post(
+            post, prompts,
+            labels["category"], labels["visual_format"], labels["strategy"],
+            client, semaphore,
+        )
+        return (offset, post, annotation, arm_id, result, False)  # False = normal
+
+    # Lancer toutes les tâches en parallèle
+    tasks = []
+    for offset, post, annotation in mismatch_posts:
+        tasks.append(classify_mismatch(offset, post, annotation))
+    for offset, post, annotation in normal_posts:
+        for arm_id in arms:
+            tasks.append(classify_normal(offset, post, annotation, arm_id))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # ── 3. Post-traitement séquentiel (stockage BDD + agrégation matches) ──
+    # Grouper par (offset, post) pour traitement cohérent
+    results_by_offset: dict[int, list] = defaultdict(list)
+    for r in results:
+        if isinstance(r, Exception):
+            log.warning("Classification échouée dans multi_evaluate: %s", r)
+            continue
+        offset, post, annotation, arm_id, result, is_mismatch = r
+        results_by_offset[offset].append((post, annotation, arm_id, result, is_mismatch))
+
+    # Trier par offset pour maintenir l'ordre
+    for offset in sorted(results_by_offset.keys()):
+        items = results_by_offset[offset]
+        if not items:
+            continue
+
+        post, annotation, _, _, is_mismatch = items[0]
         scope = post.media_product_type
         labels = labels_by_scope[scope]
 
-        # Si la cible est scopée et que le scope du post diffère, le candidat
-        # ne change rien : on ne fait qu'une éval avec l'incumbent et on
-        # propage les mêmes matches à tous les bras (logique identique à
-        # double_evaluate).
-        if target_scope is not None and scope != target_scope:
-            inc_state = arm_states[incumbent_arm_id]
-            inc_prompts = build_prompts_from_state(inc_state, conn, scope)
-            inc_result = classify_post(
-                post, inc_prompts,
-                labels["category"], labels["visual_format"], labels["strategy"],
-            )
-            metric_matches = _target_metric_matches(inc_result, annotation, target_agent)
-            for arm_id in arms:
-                matches_by_arm[arm_id].extend(metric_matches)
+        if is_mismatch:
+            # Cas mismatch : un seul résultat (incumbent), propager à tous les bras
+            _, _, arm_id, result, _ = items[0]
+            metric_matches = _target_metric_matches(result, annotation, target_agent)
+            for aid in arms:
+                matches_by_arm[aid].extend(metric_matches)
 
+            # Persister incumbent
+            inc_state = arm_states[incumbent_arm_id]
             for axis in ("category", "visual_format", "strategy"):
                 scope_key = scope if axis in ("visual_format", "descriptor") else None
                 pid = (
@@ -601,16 +740,15 @@ def multi_evaluate(
                 )
                 store_prediction(
                     conn, post.ig_media_id, axis, pid,
-                    getattr(inc_result.prediction, axis),
+                    getattr(result.prediction, axis),
                     simulation_run_id=run_id,
                 )
                 incumbent_records.append(MatchRecord(
                     axis=axis,
-                    match=getattr(inc_result.prediction, axis) == annotation[axis],
+                    match=getattr(result.prediction, axis) == annotation[axis],
                     cursor=start_cursor + offset,
                 ))
-
-            for call in inc_result.api_calls:
+            for call in result.api_calls:
                 scope_key = scope if call.agent in ("descriptor", "visual_format") else None
                 pid = (
                     inc_state.db_ids.get((call.agent, scope_key))
@@ -621,74 +759,51 @@ def multi_evaluate(
                     post.ig_media_id, call.input_tokens, call.output_tokens,
                     None, call.latency_ms, run_id,
                 )
-            continue
+        else:
+            # Cas normal : un résultat par bras
+            for _, _, arm_id, result, _ in items:
+                metric_matches = _target_metric_matches(result, annotation, target_agent)
+                matches_by_arm[arm_id].extend(metric_matches)
 
-        # Sinon : exécute tous les bras en parallèle pour ce post
-        # Borné par eval_pool_size pour ne pas saturer le rate limit.
-        results_by_arm: dict[int, PipelineResult] = {}
-        max_workers = min(len(arms), eval_pool_size)
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {}
-            for arm_id, state in arm_states.items():
-                prompts = build_prompts_from_state(state, conn, scope)
-                fut = pool.submit(
-                    classify_post, post, prompts,
-                    labels["category"], labels["visual_format"], labels["strategy"],
-                )
-                futures[fut] = arm_id
-
-            for fut in as_completed(futures):
-                arm_id = futures[fut]
-                results_by_arm[arm_id] = fut.result()
-
-        # Calculer les matches et persister
-        for arm_id, result in results_by_arm.items():
-            metric_matches = _target_metric_matches(result, annotation, target_agent)
-            matches_by_arm[arm_id].extend(metric_matches)
-
-            state = arm_states[arm_id]
-            for call in result.api_calls:
-                scope_key = scope if call.agent in ("descriptor", "visual_format") else None
-                pid = (
-                    state.db_ids.get((call.agent, scope_key))
-                    or state.db_ids.get((call.agent, None))
-                )
-                store_api_call(
-                    conn, "evaluation", call.agent, call.model, pid,
-                    post.ig_media_id, call.input_tokens, call.output_tokens,
-                    None, call.latency_ms, run_id,
-                )
-
-            if arm_id == incumbent_arm_id:
-                # Persister incumbent comme dans double_evaluate (les 3 axes
-                # sont notés pour réinjection dans les métriques globales)
-                for axis in ("category", "visual_format", "strategy"):
-                    scope_key = scope if axis in ("visual_format", "descriptor") else None
+                state = arm_states[arm_id]
+                for call in result.api_calls:
+                    scope_key = scope if call.agent in ("descriptor", "visual_format") else None
                     pid = (
-                        state.db_ids.get((axis, scope_key))
-                        or state.db_ids.get((axis, None))
+                        state.db_ids.get((call.agent, scope_key))
+                        or state.db_ids.get((call.agent, None))
                     )
-                    store_prediction(
-                        conn, post.ig_media_id, axis, pid,
-                        getattr(result.prediction, axis),
-                        simulation_run_id=run_id,
+                    store_api_call(
+                        conn, "evaluation", call.agent, call.model, pid,
+                        post.ig_media_id, call.input_tokens, call.output_tokens,
+                        None, call.latency_ms, run_id,
                     )
-                    incumbent_records.append(MatchRecord(
-                        axis=axis,
-                        match=getattr(result.prediction, axis) == annotation[axis],
-                        cursor=start_cursor + offset,
-                    ))
-            else:
-                # Pour les candidats : audit trail sur l'axe ciblé uniquement
-                _store_eval_predictions_for_target(
-                    conn=conn,
-                    post_id=post.ig_media_id,
-                    prompt_version_id=state.db_ids[(target_agent, target_scope)],
-                    target_agent=target_agent,
-                    prediction=result.prediction,
-                    run_id=run_id,
-                )
+
+                if arm_id == incumbent_arm_id:
+                    for axis in ("category", "visual_format", "strategy"):
+                        scope_key = scope if axis in ("visual_format", "descriptor") else None
+                        pid = (
+                            state.db_ids.get((axis, scope_key))
+                            or state.db_ids.get((axis, None))
+                        )
+                        store_prediction(
+                            conn, post.ig_media_id, axis, pid,
+                            getattr(result.prediction, axis),
+                            simulation_run_id=run_id,
+                        )
+                        incumbent_records.append(MatchRecord(
+                            axis=axis,
+                            match=getattr(result.prediction, axis) == annotation[axis],
+                            cursor=start_cursor + offset,
+                        ))
+                else:
+                    _store_eval_predictions_for_target(
+                        conn=conn,
+                        post_id=post.ig_media_id,
+                        prompt_version_id=state.db_ids[(target_agent, target_scope)],
+                        target_agent=target_agent,
+                        prediction=result.prediction,
+                        run_id=run_id,
+                    )
 
     return MultiEvalResult(
         matches_by_arm=matches_by_arm,
@@ -826,7 +941,7 @@ def _persist_protegi_artifacts(
 INCUMBENT_ARM_ID = 0
 
 
-def run_protegi_rewrite(
+async def run_protegi_rewrite(
     args,
     conn,
     run_id: int,
@@ -939,7 +1054,7 @@ def run_protegi_rewrite(
              rewrite_count, len(arms), len(eval_posts))
 
     try:
-        multi_result = multi_evaluate(
+        multi_result = await async_multi_evaluate(
             eval_posts=eval_posts,
             annotations=annotations,
             start_cursor=eval_start_cursor,
@@ -1124,8 +1239,10 @@ def display_rolling(cursor, all_matches, window=50):
 
 # ── Main ──────────────────────────────────────────────────────
 
+MICRO_BATCH_SIZE = 10  # Posts classifiés en parallèle entre les checks de trigger
 
-def main():
+
+async def main():
     parser = argparse.ArgumentParser(
         description="Simulation MILPO prequential — boucle ProTeGi (Pryzant et al. 2023)",
     )
@@ -1136,6 +1253,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Pas de rewrite (B0-on-dev)")
     parser.add_argument("--no-rollback", action="store_true", help="Ablation A5")
     parser.add_argument("--limit", type=int, default=None, help="Nombre de posts max")
+    parser.add_argument("--micro-batch", type=int, default=MICRO_BATCH_SIZE,
+                        help="Posts classifiés en parallèle (défaut 10)")
     # ── Hyperparams ProTeGi ────────────────────────────────────
     parser.add_argument("-m", "--protegi-m", type=int, default=3,
                         help="critiques par appel critic LLM_∇ (paper m=4, défaut 3)")
@@ -1255,8 +1374,8 @@ def main():
         for scope in ("FEED", "REELS"):
             labels_by_scope[scope] = build_labels(conn, scope)
 
-        # ── 7. Boucle principale ──
-        log.info("Classification en cours...")
+        # ── 7. Boucle principale (async micro-batches) ──
+        log.info("Classification en cours (micro-batches de %d posts)...", args.micro_batch)
 
         error_buffer: list[ErrorCase] = []
         all_matches: list[MatchRecord] = []
@@ -1267,49 +1386,58 @@ def main():
         total = len(post_inputs)
 
         while cursor < total:
-            post = post_inputs[cursor]
-            annotation = annotations[post.ig_media_id]
-            scope = post.media_product_type
+            # Construire les prompts par scope pour ce batch (basé sur prompt_state actuel)
+            prompts_by_scope: dict[str, PromptSet] = {}
+            for scope in ("FEED", "REELS"):
+                prompts_by_scope[scope] = build_prompts_from_state(prompt_state, conn, scope)
 
-            # Classifier un post
-            prompts = build_prompts_from_state(prompt_state, conn, scope)
-            labels = labels_by_scope[scope]
+            # Déterminer la taille du micro-batch
+            batch_end = min(cursor + args.micro_batch, total)
+            micro_batch = post_inputs[cursor:batch_end]
 
-            try:
-                result, errors, matches = classify_and_store(
-                    post, annotation, prompts, labels, prompt_state, conn, run_id,
-                )
-            except LLMCallError as exc:
-                skipped_classification_posts += 1
-                cursor += 1
-                print()
-                log.warning(
-                    "[POST %d/%d] Classification échouée pour ig_media_id=%s après retries. Post ignoré: %s",
-                    cursor, total, post.ig_media_id, exc,
-                )
-                display_progress(
-                    cursor, total, matches_by_axis, n_processed,
-                    len(error_buffer), args.batch_size, prompt_state.versions, live_cost_estimate_usd, t0,
-                )
-                continue
-
-            for m in matches:
-                m.cursor = cursor
-                all_matches.append(m)
-                if m.match:
-                    matches_by_axis[m.axis] += 1
-
-            error_buffer.extend(errors)
-            n_processed += 1
-            total_api_calls += len(result.api_calls)
-            # Estimation live rough pour le monitoring local uniquement.
-            # Ne pas utiliser pour le mémoire : pricing variable selon provider/modèle/date.
-            live_cost_estimate_usd += sum(
-                c.input_tokens * 0.0001 / 1000 + c.output_tokens * 0.0003 / 1000
-                for c in result.api_calls
+            # Classifier le micro-batch en parallèle via async_classify_batch
+            batch_results = await async_classify_batch(
+                posts=micro_batch,
+                prompts_by_scope=prompts_by_scope,
+                labels_by_scope=labels_by_scope,
+                max_concurrent_api=20,
+                max_concurrent_posts=args.micro_batch,
             )
 
-            cursor += 1
+            # Créer un mapping post -> result pour gérer les échecs
+            results_by_id = {r.prediction.ig_media_id: r for r in batch_results}
+
+            # Post-traitement séquentiel : stocker, évaluer, accumuler erreurs
+            batch_cursor = cursor
+            for post in micro_batch:
+                result = results_by_id.get(post.ig_media_id)
+                if result is None:
+                    # Classification échouée pour ce post
+                    skipped_classification_posts += 1
+                    batch_cursor += 1
+                    continue
+
+                annotation = annotations[post.ig_media_id]
+                errors, matches = evaluate_result_and_store(
+                    post, result, annotation, prompt_state, conn, run_id,
+                )
+
+                for m in matches:
+                    m.cursor = batch_cursor
+                    all_matches.append(m)
+                    if m.match:
+                        matches_by_axis[m.axis] += 1
+
+                error_buffer.extend(errors)
+                n_processed += 1
+                total_api_calls += len(result.api_calls)
+                live_cost_estimate_usd += sum(
+                    c.input_tokens * 0.0001 / 1000 + c.output_tokens * 0.0003 / 1000
+                    for c in result.api_calls
+                )
+                batch_cursor += 1
+
+            cursor = batch_cursor
 
             display_progress(cursor, total, matches_by_axis, n_processed,
                              len(error_buffer), args.batch_size, prompt_state.versions, live_cost_estimate_usd, t0)
@@ -1351,7 +1479,7 @@ def main():
                     target_agent, target_scope or "all", len(target_errors),
                 )
 
-                outcome = run_protegi_rewrite(
+                outcome = await run_protegi_rewrite(
                     args, conn, run_id, rewrite_count,
                     target_agent, target_scope, target_errors,
                     prompt_state, eval_posts, cursor,
@@ -1439,4 +1567,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
