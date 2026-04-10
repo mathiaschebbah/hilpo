@@ -215,32 +215,29 @@ def _failure_axis(label: str, reason: str) -> AxisClassification:
     return AxisClassification(label=label, confidence="low", reasoning=reason[-280:])
 
 
-def _compact_taxonomy_context(
+def _full_taxonomy_context(
     *,
     scope: str,
     categories: list[dict],
     visual_formats: list[dict],
     strategies: list[dict],
 ) -> str:
+    cat_desc = "\n".join(f"- **{c['name']}** : {c['description'] or '(pas de description)'}" for c in categories)
+    vf_desc = "\n".join(f"- **{v['name']}** : {v['description'] or '(pas de description)'}" for v in visual_formats)
+    str_desc = "\n".join(f"- **{s['name']}** : {s['description'] or '(pas de description)'}" for s in strategies)
     return (
-        f"Scope: {scope}\n"
-        f"Category labels: {', '.join(item['name'] for item in categories)}\n"
-        f"Visual format labels: {', '.join(item['name'] for item in visual_formats)}\n"
-        f"Strategy labels: {', '.join(item['name'] for item in strategies)}\n"
-        "Utilise get_taxonomy seulement si tu as besoin des descriptions complètes."
+        f"## Taxonomie — category\n{cat_desc}\n\n"
+        f"## Taxonomie — visual_format ({scope})\n{vf_desc}\n\n"
+        f"## Taxonomie — strategy\n{str_desc}"
     )
 
 
-def _bounded_initial_message(media_ctx: MediaContext, compact_taxonomy: str) -> str:
+def _bounded_initial_message(media_ctx: MediaContext, taxonomy: str) -> str:
     caption = (media_ctx.caption or "(pas de caption)")[:700]
     return (
         f"Post Instagram Views à classer ({media_ctx.scope}).\n\n"
         f"Caption:\n{caption}\n\n"
-        "Objectif: produire category, visual_format et strategy dans une seule soumission.\n"
-        "Tour 1: tu peux utiliser des tools ou soumettre directement.\n"
-        "Tour 2: soumission finale obligatoire via submit_all_classifications.\n"
-        "Contraintes: reasoning court, au plus un appel get_examples avec n<=2.\n\n"
-        f"Taxonomies compactes:\n{compact_taxonomy}"
+        f"{taxonomy}"
     )
 
 
@@ -730,7 +727,7 @@ def classify_post_agentic_bounded(
     categories = load_categories(conn)
     visual_formats = load_visual_formats(conn, media_ctx.scope)
     strategies = load_strategies(conn)
-    compact_taxonomy = _compact_taxonomy_context(
+    taxonomy = _full_taxonomy_context(
         scope=media_ctx.scope,
         categories=categories,
         visual_formats=visual_formats,
@@ -739,7 +736,7 @@ def classify_post_agentic_bounded(
 
     system_blocks = [
         {"type": "text", "text": system_text},
-        {"type": "text", "text": compact_taxonomy, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+        {"type": "text", "text": taxonomy, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
     ]
     tools = build_bounded_tools(
         prompts=tool_prompts,
@@ -754,7 +751,7 @@ def classify_post_agentic_bounded(
     messages: list[dict[str, Any]] = [
         {
             "role": "user",
-            "content": _bounded_initial_message(media_ctx, compact_taxonomy),
+            "content": _bounded_initial_message(media_ctx, taxonomy),
         }
     ]
     trace: list[TraceEvent] = [

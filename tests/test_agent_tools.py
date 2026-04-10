@@ -46,9 +46,8 @@ class AgentToolsTests(unittest.TestCase):
         advisor = next(tool for tool in tools if tool["name"] == "advisor")
         get_examples = next(tool for tool in tools if tool["name"] == "get_examples")
 
-        self.assertEqual(advisor["max_uses"], 1)
-        self.assertIn("un seul appel", get_examples["description"])
-        self.assertIn("n <= 2", get_examples["description"])
+        self.assertEqual(advisor["max_uses"], 2)
+        self.assertIn("n <= 3", get_examples["description"])
 
 
 if __name__ == "__main__":

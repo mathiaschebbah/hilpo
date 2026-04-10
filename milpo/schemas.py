@@ -20,18 +20,21 @@ class TexteOverlay(StrictBaseModel):
     present: bool
     type: str | None  # actualite, citation, chiffre, titre_editorial, liste_numerotee, annotation, description_produit
     contenu_resume: str | None
+    chiffre_dominant: bool  # un chiffre/stat domine visuellement le texte overlay (gros, centré, premier plan)
 
 
 class Logos(StrictBaseModel):
     views: bool
     specifique: str | None  # BLUEPRINT, MOODY_MONDAY, MOODY_SUNDAY, REWIND, 9_PIECES, THROWBACK, VIEWS_ESSENTIALS, VIEWS_RESEARCH, VIEWS_TV
     marque_partenaire: str | None
+    gabarit_views_identifie: bool  # le post utilise un gabarit/template récurrent de Views (couleurs, typo, layout reconnaissable)
 
 
 class MiseEnPage(StrictBaseModel):
     fond: str | None  # photo_plein_cadre, couleur_unie, texture, collage, split_screen
     nombre_slides: int
     structure: str | None  # slide_unique, gabarit_repete, opener_contenu_closer, collage_grille
+    carousel_nature: str | None  # selection_oeuvres, selection_produits, classement_numeros, photos_ambiance, mix, non_carousel
 
 
 class ContenuPrincipal(StrictBaseModel):
@@ -47,8 +50,10 @@ class ContenuPrincipal(StrictBaseModel):
 class AudioVideo(StrictBaseModel):
     voix_off_narrative: bool
     interview_face_camera: bool
+    interview_setting: str | None  # assis_studio, debout_exterieur, micro_trottoir, non_interview
     musique_dominante: bool
     type_montage: str | None  # captation_live, montage_edite, face_camera, b_roll_narration
+    montage_recap_evenement: bool  # compilation de clips courts d'un événement (concert, festival, soirée)
 
 
 class AnalyseCaption(StrictBaseModel):

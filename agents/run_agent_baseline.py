@@ -6,14 +6,15 @@ import argparse
 import json
 import logging
 import queue
-import statistics
 import sys
 import threading
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from agents import pipeline as agent_pipeline
+from agents.cli import TuiRenderer, TuiStats
 from agents.config import MODEL_ADVISOR, MODEL_DESCRIPTOR, MODEL_EXECUTOR
 from agents.pipeline import AgentResult, classify_post_agentic
 from agents.tools import MediaContext
@@ -26,6 +27,7 @@ from milpo.db import (
 )
 from milpo.gcs import sign_all_posts_media
 
+warnings.filterwarnings("ignore", module=r"google\.auth")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(message)s",
@@ -39,26 +41,7 @@ logging.getLogger("anthropic").setLevel(logging.WARNING)
 log = logging.getLogger("agent_baseline")
 
 
-@dataclass
-class ReporterStats:
-    started: int = 0
-    completed: int = 0
-    errors: int = 0
-    in_flight_posts: int = 0
-    total_api_calls: int = 0
-    total_advisor_calls: int = 0
-    total_tool_calls: int = 0
-    total_executor_requests: int = 0
-    total_executor_input_tokens: int = 0
-    total_executor_cache_creation_tokens: int = 0
-    total_executor_cache_read_tokens: int = 0
-    executor_successes: int = 0
-    executor_cache_hits: int = 0
-    posts_with_advisor: int = 0
-    matches_total: dict[str, int] = field(
-        default_factory=lambda: {"category": 0, "visual_format": 0, "strategy": 0}
-    )
-    latencies_ms: list[int] = field(default_factory=list)
+ReporterStats = TuiStats  # backward compat alias
 
 
 def create_run(conn, config: dict) -> int:
@@ -105,14 +88,6 @@ def fail_run(conn, run_id: int) -> None:
     conn.commit()
 
 
-def _percentile(values: list[int], q: float) -> int:
-    if not values:
-        return 0
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * q)))
-    return ordered[index]
 
 
 def store_agent_results(
@@ -305,7 +280,12 @@ def main() -> None:
         default="bounded",
         help="bounded=A1 agentic bounded, legacy=A0 rollback",
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Afficher les logs JSON détaillés de la pipeline")
     args = parser.parse_args()
+
+    if not args.verbose:
+        logging.getLogger("agents").setLevel(logging.WARNING)
+        logging.getLogger("google.auth").setLevel(logging.WARNING)
 
     pipeline_name = "agent_a1_bounded" if args.pipeline_mode == "bounded" else "agent_a0"
     run_name = "A1_agentic_bounded_test" if args.pipeline_mode == "bounded" else "A0_agent_haiku_opus_test"
@@ -386,47 +366,15 @@ def main() -> None:
     write_queue: queue.Queue[tuple[int, dict, AgentResult] | None] = queue.Queue()
     total = len(raw_posts)
 
-    def _snapshot_line() -> str:
-        with lock:
-            started = stats.started
-            elapsed_min = max((time.monotonic() - t0) / 60.0, 1e-6)
-            completed = stats.completed
-            errors = stats.errors
-            in_flight_posts = stats.in_flight_posts
-            ok = max(1, completed)
-            acc_cat = stats.matches_total["category"] / ok * 100 if completed else 0.0
-            acc_vf = stats.matches_total["visual_format"] / ok * 100 if completed else 0.0
-            acc_str = stats.matches_total["strategy"] / ok * 100 if completed else 0.0
-            posts_per_min = completed / elapsed_min
-            executor_req_per_min = stats.total_executor_requests / elapsed_min
-            input_tok_per_min = stats.total_executor_input_tokens / elapsed_min
-            cache_hit_pct = (stats.executor_cache_hits / stats.executor_successes * 100) if stats.executor_successes else 0.0
-            advisor_hit_pct = (stats.posts_with_advisor / completed * 100) if completed else 0.0
-            p50_ms = int(statistics.median(stats.latencies_ms)) if stats.latencies_ms else 0
-            p95_ms = _percentile(stats.latencies_ms, 0.95)
-
-        limiter_snapshot = agent_pipeline._rate_limiter.snapshot()
-        return (
-            f"\rstarted {started:>3}/{total} | completed {completed:>3} | errors {errors:>2}"
-            f" | in_flight {in_flight_posts:>2}"
-            f" | executor_inflight {int(limiter_snapshot['inflight_requests']):>2}"
-            f" | waiting_rl {int(limiter_snapshot['waiters']):>2}"
-            f" | posts/min {posts_per_min:>5.1f}"
-            f" | exec req/min {executor_req_per_min:>6.1f}"
-            f" | input tok/min {input_tok_per_min:>7.0f}"
-            f" | cache hit {cache_hit_pct:>5.1f}%"
-            f" | advisor hit {advisor_hit_pct:>5.1f}%"
-            f" | p50/p95 {p50_ms:>4}/{p95_ms:>4} ms"
-            f" | bottleneck {limiter_snapshot['bottleneck']}"
-            f" | acc {acc_cat:>4.0f}/{acc_vf:>4.0f}/{acc_str:>4.0f}%"
-        )
-
-    def _reporter_loop() -> None:
-        while not stop_reporter.is_set():
-            print(_snapshot_line(), end="", flush=True)
-            stop_reporter.wait(0.5)
-        print(_snapshot_line(), end="", flush=True)
-        print()
+    stats.total = total
+    tui = TuiRenderer(
+        stats=stats,
+        lock=lock,
+        limiter_snapshot_fn=agent_pipeline._rate_limiter.snapshot,
+        run_id=run_id,
+        pipeline=pipeline_name,
+        t0=t0,
+    )
 
     def _writer_loop() -> None:
         writer_conn = get_conn()
@@ -500,7 +448,7 @@ def main() -> None:
                 stats.latencies_ms.append(result.latency_ms)
                 for axis in ("category", "visual_format", "strategy"):
                     if post_matches[axis]:
-                        stats.matches_total[axis] += 1
+                        stats.matches[axis] += 1
 
     def _classify_one(idx: int, post: dict) -> tuple[int, dict, AgentResult | None]:
         mid = post["ig_media_id"]
@@ -543,10 +491,9 @@ def main() -> None:
         finally:
             thread_conn.close()
 
-    reporter_thread = threading.Thread(target=_reporter_loop, name="progress-reporter", daemon=True)
     writer_thread = threading.Thread(target=_writer_loop, name="result-writer", daemon=True)
-    reporter_thread.start()
     writer_thread.start()
+    tui.start()
 
     try:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
@@ -570,7 +517,7 @@ def main() -> None:
         stop_reporter.set()
         write_queue.put(None)
         writer_thread.join()
-        reporter_thread.join()
+        tui.stop()
         fail_run(conn, run_id)
         conn.close()
         raise
@@ -578,12 +525,12 @@ def main() -> None:
     stop_reporter.set()
     write_queue.put(None)
     writer_thread.join()
-    reporter_thread.join()
+    tui.stop()
 
     with lock:
         completed = stats.completed
         errors = stats.errors
-        matches_total = dict(stats.matches_total)
+        matches_total = dict(stats.matches)
         total_api_calls = stats.total_api_calls
         total_advisor_calls = stats.total_advisor_calls
         total_tool_calls = stats.total_tool_calls

@@ -157,7 +157,7 @@ class BudgetExamplesTests(unittest.TestCase):
 
         call_args = mock_execute_tool.call_args[0]
         actual_n = call_args[1].get("n")
-        self.assertLessEqual(actual_n, 2)
+        self.assertLessEqual(actual_n, 3)
 
     @patch("agents.pipeline.get_conn")
     @patch("agents.pipeline.execute_tool")
