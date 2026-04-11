@@ -176,36 +176,66 @@ async def async_call_classifier(
             raise RuntimeError(f"Classifier {axis}: réponse vide après retries")
 
         choice = response.choices[0]
-        if not choice.message.tool_calls:
-            log.warning(
-                "Classifier %s pas de tool_call (attempt %d) — content=%r",
-                axis,
-                attempt + 1,
-                choice.message.content,
-            )
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            raise RuntimeError(f"Classifier {axis}: pas de tool_call après retries")
+        arguments_raw: str | None = None
 
-        tool_call = choice.message.tool_calls[0]
-        if tool_call.function.name != tool_name:
-            log.warning(
-                "Classifier %s nom de tool inattendu '%s' (attendu '%s')",
-                axis,
-                tool_call.function.name,
-                tool_name,
-            )
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            raise RuntimeError(
-                f"Classifier {axis}: nom de tool inattendu '{tool_call.function.name}'"
-            )
+        if choice.message.tool_calls:
+            tool_call = choice.message.tool_calls[0]
+            if tool_call.function.name != tool_name:
+                log.warning(
+                    "Classifier %s nom de tool inattendu '%s' (attendu '%s')",
+                    axis,
+                    tool_call.function.name,
+                    tool_name,
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(
+                    f"Classifier {axis}: nom de tool inattendu '{tool_call.function.name}'"
+                )
+            arguments_raw = tool_call.function.arguments
+        else:
+            # Fallback : certains modèles (ex: gemini-3-flash-preview) ne
+            # supportent pas bien le tool calling via l'endpoint OpenAI-compat
+            # et renvoient le JSON comme plain text, potentiellement précédé
+            # par du thinking/reasoning en texte brut, avec le JSON dans un
+            # bloc markdown ```json...``` à la fin.
+            #
+            # Stratégie d'extraction :
+            # 1. Chercher un bloc ```json...``` (priorité au dernier)
+            # 2. Sinon, extraire de la première { à la dernière } matching
+            import re
+
+            content = (choice.message.content or "").strip()
+            extracted: str | None = None
+
+            # Dernier bloc ```json ... ``` ou ``` ... ``` avec JSON à l'intérieur
+            code_blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+            if code_blocks:
+                extracted = code_blocks[-1]
+            else:
+                # Fallback : premier {...} équilibré
+                first_brace = content.find("{")
+                last_brace = content.rfind("}")
+                if first_brace != -1 and last_brace > first_brace:
+                    extracted = content[first_brace : last_brace + 1]
+
+            if extracted:
+                arguments_raw = extracted
+            else:
+                log.warning(
+                    "Classifier %s pas de tool_call ni content (attempt %d)",
+                    axis,
+                    attempt + 1,
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"Classifier {axis}: pas de tool_call ni content après retries")
 
         try:
             label, confidence, reasoning = parse_classifier_arguments(
-                tool_call.function.arguments,
+                arguments_raw,
                 axis,
                 labels,
             )
@@ -215,7 +245,7 @@ async def async_call_classifier(
                 axis,
                 attempt + 1,
                 exc,
-                tool_call.function.arguments,
+                arguments_raw,
             )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
