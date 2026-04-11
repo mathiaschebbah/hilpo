@@ -273,46 +273,40 @@ def bootstrap_slot_rules(
 ) -> RuleState:
     """Bootstrap complet : charge v0, parse en skeleton + rules, persiste.
 
-    Retourne le RuleState initial pour le slot.
+    Idempotent : si le slot a déjà été bootstrappé (skeleton présent et
+    rules persistées sur le prompt_version v0), recharge depuis la BDD
+    au lieu de re-persister.
     """
     from milpo.db.prompts import get_prompt_version
-    from milpo.db.rules import get_skeleton, insert_rules, insert_skeleton
+    from milpo.db.rules import get_skeleton, insert_rules, insert_skeleton, load_rules
     from milpo.dsl_vocabulary import get_signal_names
     from milpo.prompting import build_labels
 
-    # Vérifier si déjà bootstrappé
-    existing_skeleton = get_skeleton(conn, agent, scope)
-    if existing_skeleton is not None:
-        log.info("Slot %s/%s déjà bootstrappé, chargement.", agent, scope or "all")
-        # Charger depuis l'état actif
-        from milpo.db.prompts import get_active_prompt
-        active = get_active_prompt(conn, agent, scope, source="human_v0")
-        if active:
-            from milpo.db.rules import load_rules
-            rules = load_rules(conn, active["id"])
-            if rules:
-                signal_vocab = get_signal_names(scope or "FEED")
-                label_vocab = set(build_labels(conn, scope or "FEED").get(agent, []))
-                return RuleState(
-                    agent=agent, scope=scope,
-                    skeleton=existing_skeleton,
-                    rules=rules,
-                    signal_vocab=signal_vocab,
-                    label_vocab=label_vocab,
-                )
-
-    # Charger v0
     v0 = get_prompt_version(conn, agent, scope, version=0, source="human_v0")
     if v0 is None:
         raise RuntimeError(f"Prompt v0 introuvable pour {agent}/{scope or 'all'}")
 
-    v0_content = v0["content"]
     effective_scope = scope or "FEED"
     signal_vocab = get_signal_names(effective_scope)
     labels = build_labels(conn, effective_scope)
     label_vocab = set(labels.get(agent, []))
 
+    existing_skeleton = get_skeleton(conn, agent, scope)
+    if existing_skeleton is not None:
+        existing_rules = load_rules(conn, v0["id"])
+        if existing_rules:
+            log.info("Slot %s/%s déjà bootstrappé, chargement.", agent, scope or "all")
+            return RuleState(
+                agent=agent,
+                scope=scope,
+                skeleton=existing_skeleton,
+                rules=existing_rules,
+                signal_vocab=signal_vocab,
+                label_vocab=label_vocab,
+            )
+
     # Parser le v0
+    v0_content = v0["content"]
     if agent == "visual_format":
         skeleton, rules = _extract_rules_from_v0_vf(v0_content, signal_vocab, label_vocab)
     else:
@@ -323,7 +317,6 @@ def bootstrap_slot_rules(
         default_label = list(label_vocab)[0] if label_vocab else "unknown"
         rules = [DSLRule(rule_type=RuleType.FALLBACK, label=default_label)]
 
-    # Persister
     insert_skeleton(conn, agent, scope, skeleton)
     insert_rules(conn, v0["id"], agent, scope, rules)
 

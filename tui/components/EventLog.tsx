@@ -1,7 +1,19 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-type EventEntry = { ts: string; msg: string; type?: "event" | "api" | "error" };
+type EventEntry = { ts: string; msg: string; type?: string };
+
+function colorForEvent(ev: EventEntry): string | undefined {
+  if (ev.type === "accept") return "green";
+  if (ev.type === "reject") return "yellow";
+  if (ev.type === "step") return "cyan";
+  if (ev.type === "error") return "red";
+  if (ev.msg.includes("PROMOTED") || ev.msg.includes("ACCEPT")) return "green";
+  if (ev.msg.includes("ROLLBACK")) return "red";
+  if (ev.msg.includes("FAILED") || ev.msg.includes("TIMEOUT")) return "yellow";
+  if (ev.msg.includes("REWRITE")) return "cyan";
+  return undefined;
+}
 
 export const EventLog: React.FC<{
   events: EventEntry[];
@@ -28,16 +40,7 @@ export const EventLog: React.FC<{
           );
         }
 
-        // Important events get color based on content
-        const color = ev.msg.includes("PROMOTED")
-          ? "green"
-          : ev.msg.includes("ROLLBACK")
-            ? "red"
-            : ev.msg.includes("FAILED") || ev.msg.includes("TIMEOUT")
-              ? "yellow"
-              : ev.msg.includes("REWRITE")
-                ? "cyan"
-                : undefined;
+        const color = colorForEvent(ev);
 
         return (
           <Text key={i} bold>

@@ -28,9 +28,18 @@ from milpo.objective import compute_j_components
 from milpo.prompting import build_labels
 from milpo.rules import OPTIMIZABLE_SLOTS, RuleState
 from milpo.rules_bootstrap import bootstrap_slot_rules, verify_bootstrap
+from milpo.async_inference import set_api_call_hook
+from milpo.rewriter import set_rewriter_api_hook
 from milpo.simulation.evaluation import FullEvalResult, evaluate_full_dev_opt
 from milpo.simulation.optimize import coordinate_ascent
 from milpo.simulation.state import PromptState, load_prompt_state_from_db
+from milpo.simulation.structured_display import StructuredDisplay
+from milpo.simulation.telemetry import (
+    emit_init_status,
+    emit_telemetry,
+    init_telemetry,
+    reset_init_telemetry,
+)
 
 console = Console()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
@@ -134,10 +143,15 @@ async def run_structured_optimization(args) -> int:
     conn = get_conn()
     run_id = None
     t0 = time.monotonic()
+    display: StructuredDisplay | None = None
+
+    init_telemetry()
+    reset_init_telemetry()
 
     try:
         # ── 1. BOOTSTRAP ───────────────────────────────────────────────
         console.print("\n[bold]Phase 1 : BOOTSTRAP[/bold]\n")
+        emit_init_status(phase="Bootstrap", stage="dev_split")
 
         # Dev split
         console.print("Creating/loading dev-opt / dev-holdout split...")
@@ -155,20 +169,45 @@ async def run_structured_optimization(args) -> int:
         holdout_annotations = {pid: ann for pid, ann in all_annotations.items() if pid in holdout_ids}
         console.print(f"  annotations dev-opt: {len(opt_annotations)}, dev-holdout: {len(holdout_annotations)}")
 
-        # Load ALL posts (opt + holdout) pour signer les URLs
+        # Charger et filtrer les posts du split aux annotés
         from milpo.db import load_dev_posts, load_posts_media, load_post_media
         all_raw_posts = load_dev_posts(conn, limit=None, split=args.split)
         annotated_ids = set(all_annotations.keys())
         all_raw_posts = [p for p in all_raw_posts if p["ig_media_id"] in annotated_ids]
 
-        console.print(f"  signing GCS URLs for {len(all_raw_posts)} posts...")
+        # Partitionner opt/holdout dans l'ordre de présentation
+        opt_raw = [p for p in all_raw_posts if p["ig_media_id"] in opt_ids]
+        holdout_raw = [p for p in all_raw_posts if p["ig_media_id"] in holdout_ids]
+
+        # Appliquer --limit sur opt AVANT le signing ; skip holdout en --dry-run
+        if args.limit:
+            opt_raw = opt_raw[: args.limit]
+        if args.dry_run:
+            holdout_raw = []
+
+        posts_to_sign = opt_raw + holdout_raw
+        console.print(
+            f"  signing GCS URLs for {len(posts_to_sign)} posts "
+            f"(opt={len(opt_raw)}, holdout={len(holdout_raw)})..."
+        )
+
+        def _on_sign_progress(stage_name: str, done: int, total: int) -> None:
+            emit_init_status(
+                phase="Bootstrap",
+                stage=f"sign_gcs:{stage_name}",
+                done=done,
+                total=total,
+                unit="posts",
+            )
+
         signed_by_post = sign_all_posts_media(
-            all_raw_posts, load_post_media, conn, max_workers=20,
+            posts_to_sign, load_post_media, conn, max_workers=20,
             load_all_media_fn=load_posts_media,
+            on_progress=_on_sign_progress,
         )
 
         all_post_inputs: dict[int, PostInput] = {}
-        for post in all_raw_posts:
+        for post in posts_to_sign:
             signed = signed_by_post.get(post["ig_media_id"], [])
             if not signed:
                 continue
@@ -181,11 +220,16 @@ async def run_structured_optimization(args) -> int:
             )
             all_post_inputs[post["ig_media_id"]] = pi
 
-        opt_post_inputs = [all_post_inputs[pid] for pid in opt_ids if pid in all_post_inputs]
-        holdout_post_inputs = [all_post_inputs[pid] for pid in holdout_ids if pid in all_post_inputs]
-
-        if args.limit:
-            opt_post_inputs = opt_post_inputs[:args.limit]
+        opt_post_inputs = [
+            all_post_inputs[p["ig_media_id"]]
+            for p in opt_raw
+            if p["ig_media_id"] in all_post_inputs
+        ]
+        holdout_post_inputs = [
+            all_post_inputs[p["ig_media_id"]]
+            for p in holdout_raw
+            if p["ig_media_id"] in all_post_inputs
+        ]
 
         console.print(f"  posts prêts: {len(opt_post_inputs)} opt, {len(holdout_post_inputs)} holdout")
 
@@ -196,7 +240,14 @@ async def run_structured_optimization(args) -> int:
         # Bootstrap rules
         console.print("\n[bold]Bootstrap v0 → skeleton + DSL rules[/bold]\n")
         rule_states: dict[tuple[str, str | None], RuleState] = {}
-        for agent, scope in OPTIMIZABLE_SLOTS:
+        for slot_idx, (agent, scope) in enumerate(OPTIMIZABLE_SLOTS, start=1):
+            emit_init_status(
+                phase="Bootstrap",
+                stage=f"rules:{agent}/{scope or 'all'}",
+                done=slot_idx,
+                total=len(OPTIMIZABLE_SLOTS),
+                unit="slots",
+            )
             rule_state = bootstrap_slot_rules(conn, agent, scope)
             rule_states[(agent, scope)] = rule_state
 
@@ -211,6 +262,13 @@ async def run_structured_optimization(args) -> int:
                 console.print(f"    [{i}] {rule.rule_type.value}: {compiled[:80]}")
             if rule_state.rule_count() > 5:
                 console.print(f"    ... ({rule_state.rule_count() - 5} more)")
+
+        # Synchroniser prompt_state avec les rules : initial eval et coord ascent
+        # doivent mesurer le même prompt (skeleton + v0 rules rendus), sinon les
+        # slots dont l'actif en BDD est une promotion ProTeGi (vf/FEED v15) ont
+        # un J_initial biaisé vs candidats.
+        for (agent, scope), rule_state in rule_states.items():
+            prompt_state.instructions[(agent, scope)] = rule_state.render()
 
         # Create run
         run_config = {
@@ -227,6 +285,18 @@ async def run_structured_optimization(args) -> int:
         run_id = _create_structured_run(conn, run_config)
         console.print(f"\n  simulation_run_id = {run_id}")
 
+        display = StructuredDisplay(run_id=run_id, flags=["structured"])
+
+        def _on_api_event(agent, model, latency_ms, in_tok, out_tok, status):
+            display.add_api_call(agent, model, latency_ms, in_tok, out_tok, status)
+
+        set_api_call_hook(_on_api_event)
+        set_rewriter_api_hook(_on_api_event)
+
+        display.set_phase("eval_initial", unit="posts")
+        display.set_phase_progress(0, len(opt_post_inputs))
+        emit_telemetry(display)
+
         # ── 2. ÉVALUATION INITIALE sur dev-opt ────────────────────────
         console.print("\n[bold]Phase 2 : ÉVALUATION INITIALE sur dev-opt[/bold]\n")
         console.print(f"  Classifying {len(opt_post_inputs)} posts...")
@@ -234,6 +304,8 @@ async def run_structured_optimization(args) -> int:
         def _on_eval_progress(done: int, total: int):
             if done % 10 == 0 or done == total:
                 console.print(f"    {done}/{total}", end="\r")
+            display.set_phase_progress(done, total)
+            emit_telemetry(display)
 
         initial_eval: FullEvalResult = await evaluate_full_dev_opt(
             dev_opt_posts=opt_post_inputs,
@@ -255,6 +327,16 @@ async def run_structured_optimization(args) -> int:
         console.print(f"    macroF1_cat = {j_init['macroF1_cat']:.4f}")
         console.print(f"    acc_strat   = {j_init['acc_strat']:.4f}")
 
+        display.set_j_initial(
+            j_init["J"],
+            {
+                "macroF1_vf": j_init["macroF1_vf"],
+                "macroF1_cat": j_init["macroF1_cat"],
+                "acc_strat": j_init["acc_strat"],
+            },
+        )
+        emit_telemetry(display)
+
         if args.dry_run:
             console.print("\n[yellow]--dry-run : arrêt après évaluation initiale.[/yellow]")
             _finish_structured_run(conn, run_id, {
@@ -266,13 +348,64 @@ async def run_structured_optimization(args) -> int:
                 "j_final": j_init["J"],
                 "total_steps": 0,
             })
+            display.set_phase("done")
+            display.add_event("dry-run completed", "step")
+            emit_telemetry(display)
             return run_id
 
         # ── 3. OPTIMISATION ────────────────────────────────────────────
         console.print("\n[bold]Phase 3 : COORDINATE ASCENT[/bold]\n")
 
+        display.set_phase("coord_ascent", unit="steps")
+        emit_telemetry(display)
+
         def _on_opt_status(msg: str):
             console.print(f"  {msg}")
+
+        def _on_opt_event(event: dict) -> None:
+            assert display is not None
+            event_type = event.get("type")
+            if event_type == "pass_start":
+                display.set_pass(event["pass_num"], event["pass_max"])
+            elif event_type == "slot_start":
+                display.start_slot(
+                    agent=event["agent"],
+                    scope=event["scope"],
+                    j_initial=event["j_initial"],
+                    max_steps=event["max_steps"],
+                )
+            elif event_type == "step_start":
+                display.slot_step(event["step"])
+            elif event_type == "sub_phase":
+                display.slot_step(display.current_step, sub_phase=event["sub_phase"])
+            elif event_type == "step_accepted":
+                display.accept_step(
+                    j_before=event["j_before"],
+                    j_after=event["j_after"],
+                    rule_summary=event.get("rule_summary", ""),
+                )
+            elif event_type == "step_rejected":
+                display.reject_step(
+                    patience_left=event["patience_left"],
+                    patience_max=event["patience_max"],
+                )
+            elif event_type == "tabu_hit":
+                display.inc_tabu()
+            elif event_type == "slot_done":
+                display.finish_slot(
+                    steps_taken=event["steps_taken"],
+                    steps_accepted=event["steps_accepted"],
+                    j_initial=event["j_initial"],
+                    j_final=event["j_final"],
+                    tabu_hits=event["tabu_hits"],
+                )
+            elif event_type == "pass_done":
+                display.register_pass_done()
+                display.add_event(
+                    f"pass {event['pass_num']} done (any_improved={event['any_improved']})",
+                    "step",
+                )
+            emit_telemetry(display)
 
         ascent_result = await coordinate_ascent(
             conn=conn,
@@ -289,10 +422,14 @@ async def run_structured_optimization(args) -> int:
             max_passes=args.opt_max_passes,
             n_patches=args.n_patches,
             on_status=_on_opt_status,
+            on_event=_on_opt_event,
         )
 
         # ── 4. VALIDATION HOLDOUT ─────────────────────────────────────
         console.print("\n[bold]Phase 4 : VALIDATION sur dev-holdout[/bold]\n")
+        display.set_phase("eval_holdout", unit="posts")
+        display.set_phase_progress(0, len(holdout_post_inputs))
+        emit_telemetry(display)
         console.print(f"  Classifying {len(holdout_post_inputs)} holdout posts...")
 
         holdout_eval: FullEvalResult = await evaluate_full_dev_opt(
@@ -310,6 +447,15 @@ async def run_structured_optimization(args) -> int:
         console.print(f"    macroF1_vf  = {j_holdout['macroF1_vf']:.4f}")
         console.print(f"    macroF1_cat = {j_holdout['macroF1_cat']:.4f}")
         console.print(f"    acc_strat   = {j_holdout['acc_strat']:.4f}")
+
+        display.set_j_holdout(
+            j_holdout["J"],
+            {
+                "macroF1_vf": j_holdout["macroF1_vf"],
+                "macroF1_cat": j_holdout["macroF1_cat"],
+                "acc_strat": j_holdout["acc_strat"],
+            },
+        )
 
         # ── 5. RÉSULTATS ──────────────────────────────────────────────
         console.print("\n[bold]Phase 5 : RÉSULTATS[/bold]\n")
@@ -369,6 +515,9 @@ async def run_structured_optimization(args) -> int:
             "total_steps": sum(r.steps_taken for r in ascent_result.slot_results),
             "total_accepted": sum(r.steps_accepted for r in ascent_result.slot_results),
         })
+
+        display.set_phase("done")
+        emit_telemetry(display)
         return run_id
 
     except (KeyboardInterrupt, SystemExit):

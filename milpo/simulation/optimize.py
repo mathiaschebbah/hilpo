@@ -102,6 +102,7 @@ async def optimize_slot(
     max_steps: int = 30,
     n_patches: int = 3,
     on_status: Callable[[str], None] | None = None,
+    on_event: Callable[[dict], None] | None = None,
 ) -> SlotOptResult:
     """Optimise un slot avec la boucle structurée critic→editor→eval.
 
@@ -146,6 +147,16 @@ async def optimize_slot(
 
         if on_status:
             on_status(f"slot {slot_key} step {step_number}/{max_steps} (J={j_current:.4f})")
+        if on_event:
+            on_event({
+                "type": "step_start",
+                "slot_key": slot_key,
+                "agent": target_agent,
+                "scope": target_scope,
+                "step": step_number,
+                "max_steps": max_steps,
+                "j_current": j_current,
+            })
 
         # 1. Collecter les erreurs grounded
         errors = _collect_errors_grounded(eval_result, target_agent, conn)
@@ -157,6 +168,8 @@ async def optimize_slot(
         # 2. Critic
         if on_status:
             on_status(f"slot {slot_key} step {step_number} — critic...")
+        if on_event:
+            on_event({"type": "sub_phase", "sub_phase": "critic"})
         try:
             critique_result = await asyncio.to_thread(
                 rule_critique,
@@ -172,6 +185,8 @@ async def optimize_slot(
         # 3. Editor → n_patches patches
         if on_status:
             on_status(f"slot {slot_key} step {step_number} — editor (×{n_patches})...")
+        if on_event:
+            on_event({"type": "sub_phase", "sub_phase": "editor"})
         try:
             patches_result = await asyncio.to_thread(
                 rule_edit,
@@ -206,11 +221,15 @@ async def optimize_slot(
             candidate_hash = candidate_state.state_hash()
             if tabu.is_tabu(slot_key, candidate_hash):
                 tabu_hits += 1
+                if on_event:
+                    on_event({"type": "tabu_hit"})
                 continue
 
             candidate_prompt = candidate_state.render()
             if on_status:
                 on_status(f"slot {slot_key} step {step_number} — eval candidate...")
+            if on_event:
+                on_event({"type": "sub_phase", "sub_phase": "eval"})
 
             try:
                 this_candidate_results = await asyncio.wait_for(
@@ -284,12 +303,29 @@ async def optimize_slot(
                 "[OPT] %s step %d: ACCEPTED J=%.4f→%.4f (+%.4f)",
                 slot_key, step_number, j_before_step, j_current, j_current - j_before_step,
             )
+            if on_event:
+                on_event({
+                    "type": "step_accepted",
+                    "slot_key": slot_key,
+                    "step": step_number,
+                    "j_before": j_before_step,
+                    "j_after": j_current,
+                    "rule_summary": best_op.op_type.value if best_op else "",
+                })
         else:
             patience_left -= 1
             log.info(
                 "[OPT] %s step %d: REJECTED (patience=%d/%d)",
                 slot_key, step_number, patience_left, patience,
             )
+            if on_event:
+                on_event({
+                    "type": "step_rejected",
+                    "slot_key": slot_key,
+                    "step": step_number,
+                    "patience_left": patience_left,
+                    "patience_max": patience,
+                })
 
         # 6. Log step
         insert_optimization_step(
@@ -344,6 +380,7 @@ async def coordinate_ascent(
     max_passes: int = 5,
     n_patches: int = 3,
     on_status: Callable[[str], None] | None = None,
+    on_event: Callable[[dict], None] | None = None,
 ) -> CoordinateAscentResult:
     """Coordinate ascent : passes multiples sur tous les slots."""
     eval_cache = EvalCache()
@@ -362,6 +399,13 @@ async def coordinate_ascent(
         any_improved = False
 
         log.info("[COORD] === Passe %d/%d (J=%.4f) ===", pass_num, max_passes, j_global_best)
+        if on_event:
+            on_event({
+                "type": "pass_start",
+                "pass_num": pass_num,
+                "pass_max": max_passes,
+                "j_global": j_global_best,
+            })
 
         for agent, scope in slots_to_optimize:
             slot_key = f"{agent}/{scope or 'all'}"
@@ -371,6 +415,16 @@ async def coordinate_ascent(
                 on_status(f"passe {pass_num} — {slot_key}")
 
             log.info("[COORD] Optimisation %s...", slot_key)
+
+            if on_event:
+                on_event({
+                    "type": "slot_start",
+                    "agent": agent,
+                    "scope": scope,
+                    "slot_key": slot_key,
+                    "j_initial": _compute_j_from_axis_results(cached_axis_results),
+                    "max_steps": max_steps_per_slot,
+                })
 
             result = await optimize_slot(
                 conn=conn,
@@ -390,9 +444,22 @@ async def coordinate_ascent(
                 max_steps=max_steps_per_slot,
                 n_patches=n_patches,
                 on_status=on_status,
+                on_event=on_event,
             )
 
             all_slot_results.append(result)
+            if on_event:
+                on_event({
+                    "type": "slot_done",
+                    "agent": agent,
+                    "scope": scope,
+                    "slot_key": slot_key,
+                    "steps_taken": result.steps_taken,
+                    "steps_accepted": result.steps_accepted,
+                    "j_initial": result.j_initial,
+                    "j_final": result.j_final,
+                    "tabu_hits": result.tabu_hits,
+                })
 
             if result.j_final > result.j_initial:
                 any_improved = True
@@ -410,6 +477,14 @@ async def coordinate_ascent(
         j_after_pass = _compute_j_from_axis_results(cached_axis_results)
         if j_after_pass > j_global_best:
             j_global_best = j_after_pass
+
+        if on_event:
+            on_event({
+                "type": "pass_done",
+                "pass_num": pass_num,
+                "any_improved": any_improved,
+                "j_global": j_after_pass,
+            })
 
         if not any_improved:
             log.info("[COORD] Aucune amélioration dans la passe %d, arrêt.", pass_num)

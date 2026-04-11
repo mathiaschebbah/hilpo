@@ -5,8 +5,10 @@ import { spawn, type ChildProcess } from "child_process";
 import type { AddressInfo } from "net";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import type { TelemetryState } from "./types.js";
+import type { AnyTelemetryState } from "./types.js";
+import { isStructured } from "./types.js";
 import { Dashboard } from "./components/Dashboard.js";
+import { StructuredDashboard } from "./components/StructuredDashboard.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -90,7 +92,7 @@ const InitStatus: React.FC<{ progress: InitTelemetry | null; wsUrl: string | nul
 };
 
 const App: React.FC = () => {
-  const [state, setState] = useState<TelemetryState | null>(null);
+  const [state, setState] = useState<AnyTelemetryState | null>(null);
   const [initProgress, setInitProgress] = useState<InitTelemetry | null>(null);
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
@@ -112,7 +114,7 @@ const App: React.FC = () => {
           if (isInitMessage(data)) {
             setInitProgress(data);
           } else {
-            setState(data as TelemetryState);
+            setState(data as AnyTelemetryState);
             setInitProgress(null);
           }
         } catch {
@@ -141,8 +143,16 @@ const App: React.FC = () => {
       setWsUrl(url);
 
       // 2. Spawn Python simulation once the WebSocket server is actually listening
-      const args = process.argv.slice(2).filter((a) => a !== "--");
-      const child = spawn("uv", ["run", "python", "scripts/run_simulation.py", ...args], {
+      const rawArgs = process.argv.slice(2).filter((a) => a !== "--");
+      const useLegacy = rawArgs.includes("--legacy");
+      // --structured accepté silencieusement pour rétro-compat (mode défaut)
+      const forwardedArgs = rawArgs.filter(
+        (a) => a !== "--legacy" && a !== "--structured",
+      );
+      const pythonScript = useLegacy
+        ? "scripts/run_simulation.py"
+        : "scripts/run_structured_optimization.py";
+      const child = spawn("uv", ["run", "python", pythonScript, ...forwardedArgs], {
         cwd: projectRoot,
         stdio: ["inherit", "ignore", "pipe"],
         env: {
@@ -200,7 +210,7 @@ const App: React.FC = () => {
       <Box flexDirection="column">
         <Text color="red"> Python process exited (code {exitCode}) without sending telemetry.</Text>
         {lastLines ? <Text color="red">{lastLines}</Text> : null}
-        <Text dimColor> Run manually: uv run python scripts/run_simulation.py</Text>
+        <Text dimColor> Run manually: uv run python {process.argv.includes("--legacy") ? "scripts/run_simulation.py" : "scripts/run_structured_optimization.py"}</Text>
       </Box>
     );
   }
@@ -209,6 +219,9 @@ const App: React.FC = () => {
     return <InitStatus progress={initProgress} wsUrl={wsUrl} />;
   }
 
+  if (isStructured(state)) {
+    return <StructuredDashboard state={state} done={pythonExited} exitCode={exitCode} />;
+  }
   return <Dashboard state={state} done={pythonExited} exitCode={exitCode} />;
 };
 
