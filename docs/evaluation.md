@@ -385,3 +385,28 @@ Les 4 descripteurs ne mentionnent jamais de flèche. Le descripteur n'hallucine 
 3. Mesurer l'effet localement sur la classe ciblée (où le gain attendu est typiquement +20 à +80 points) plutôt que sur l'accuracy globale
 
 La méthode (1) est la plus pragmatique compte tenu du budget. La méthode (3) est complémentaire : même si l'accuracy globale bouge dans le bruit, la matrice de confusion par classe reste interprétable.
+
+### 2026-04-11 — Limite fondamentale de la cascade oracle textuelle
+
+**Contexte.** Après un premier appel oracle (Claude Sonnet 4.6 sur les 138 erreurs du run 70), on a envisagé un déploiement en production sous forme de cascade confidence-aware : les prédictions low-confidence du classifieur primaire (Gemini 3.1 Flash Lite) seraient escaladées vers Sonnet 4.6 pour une seconde classification. Le raisonnement initial : les 55% `agrees_truth` de l'oracle suggéraient un plafond théorique de ~+15pp d'accuracy avec cascade parfaite.
+
+**Observation.** La cascade oracle textuelle est **fondamentalement bornée par la qualité du descripteur en amont**. Les deux modèles (Flash Lite et Sonnet 4.6) opèrent sur les **mêmes features texte** produites par le descripteur multimodal — ni l'un ni l'autre n'accède directement aux pixels. Un signal visuel manqué par le descripteur est définitivement perdu pour tout classifieur aval.
+
+**Preuve empirique.** Sur le cas `DS45cX6DJ9I` (Nabana no Sato festival des lumières), le descripteur a **correctement capturé** le texte overlay slide 1 *« L'installation lumineuse du mont Fuji lors du festival de Nabana no Sato »* + logo Views. Sonnet 4.6 (confidence=high) a néanmoins classifié en `reel_mood` en écrivant *« sans structure d'actualité textuelle dominante »* — une erreur d'**interprétation** des features descripteur, pas de perception. Le texte overlay était lisible dans les features mais Sonnet l'a sous-pondéré en faveur du ton contemplatif.
+
+**Second effet observé.** Sur 13 cas Sonnet high-confidence `agrees_prediction` présentés à l'humain pour validation rapide (auto-commit), seulement **2/13 (15%)** ont été validés. Les 11 autres étaient des sur-interprétations où Sonnet matchait sur des patterns génériques (« plusieurs items distincts = post_selection ») en manquant des gabarits visuels spécifiques à Views (`post_frise`, `post_chiffre`). Le ratio noise/signal sur les hauts niveaux de confidence oracle est beaucoup plus élevé qu'on ne l'aurait anticipé.
+
+**Recalibration du plafond d'accuracy.**
+- Estimation initiale (naïve) : 55% × 138 erreurs ≈ +15pp si cascade parfaite.
+- Estimation réaliste après audit humain des verdicts : ~30-40% de signal utile net, soit **+3 à +7pp** d'accuracy en pratique.
+- Significatif mais pas transformateur. Ne permet pas d'atteindre les 90% visés.
+
+**Vraie valeur de l'oracle identifiée.** L'oracle Sonnet 4.6 s'est révélé **plus utile comme auditeur d'annotations que comme classifieur de secours**. Il a permis d'identifier avec confiance humaine-validée 10 incohérences d'annotation (6 `reel_news`→`reel_mood`, 4 `post_mood`→`post_anniversaire`) qui n'auraient pas été trouvées par inspection manuelle exhaustive. Ces re-annotations ont amélioré le score vf de +5.7pp sur le périmètre production ≥2024 (run 71 72.6% → run 72 78.3%) — sans toucher au classifieur, uniquement via l'audit ground-truth guidé par oracle.
+
+**Conséquence architecturale pour les travaux futurs.** Une cascade textuelle Flash Lite → Sonnet 4.6 sur le même descripteur n'est pas la bonne abstraction — elle hérite d'un goulot partagé. Deux alternatives mériteraient d'être explorées :
+
+1. **Cascade multimodale** : escalader les cas low-confidence vers un modèle qui accède directement aux pixels (Gemini 3 Pro, Sonnet 4.6 vision, GPT-5 vision). Bypass complet du descripteur pour les cas difficiles. Ce n'est plus un « oracle texte », c'est un « re-perception multimodale ».
+
+2. **Amélioration du descripteur** : swap du descripteur Gemini 3.1 Flash Lite vers Gemini 3 Pro multimodal améliore les features pour **tous** les posts, pas seulement les cas low-confidence. Gain distribué mais sans logique de routing.
+
+L'oracle textuel garde sa valeur comme **outil offline d'audit d'annotations** (cf. workflow data-centric de cette journée), mais son déploiement comme classifieur cascade en production nécessite une reformulation architecturale.
