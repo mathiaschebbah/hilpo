@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from milpo.async_inference import (
     async_call_descriptor,
@@ -430,6 +431,23 @@ async def async_multi_evaluate(
 # ── Évaluation J pour l'optimisation structurée ───────────────────────────
 
 
+@dataclass
+class FullEvalResult:
+    """Résultat complet de l'évaluation sur dev-opt.
+
+    Conserve les résultats per-post pour :
+    - Peupler cached_features (P0 fix)
+    - Construire des ErrorCase grounded avec features/caption (P2 fix)
+    """
+
+    axis_results: dict[str, list[tuple[str, str]]]
+    features_by_post: dict[int, str]  # post_id → descriptor features text
+    per_post_results: dict[int, dict[str, str]]  # post_id → {axis: pred_label}
+    per_post_annotations: dict[int, dict[str, str]]  # post_id → {axis: true_label}
+    per_post_features: dict[int, str]  # alias for features_by_post (clarity)
+    per_post_captions: dict[int, str | None]  # post_id → caption
+
+
 async def evaluate_full_dev_opt(
     dev_opt_posts: list[PostInput],
     annotations: dict[int, dict],
@@ -439,22 +457,24 @@ async def evaluate_full_dev_opt(
     run_id: int,
     max_concurrent_api: int = 20,
     on_progress: Callable[[int, int], None] | None = None,
-) -> dict[str, list[tuple[str, str]]]:
+) -> FullEvalResult:
     """Classify ALL dev-opt posts avec le prompt_state courant.
 
-    Retourne {axis: [(true_label, pred_label), ...]} pour les 3 axes.
-    Le descripteur est appelé une seule fois par post (features cachées).
+    Retourne un FullEvalResult avec :
+    - axis_results : {axis: [(true, pred), ...]} pour compute_j
+    - features_by_post : {post_id: features_text} pour le cache descripteur
+    - per_post_results : {post_id: {axis: pred}} pour ErrorCase grounded
     """
-    from milpo.eval_cache import prompt_hash
-
     client = get_async_client()
     semaphore = asyncio.Semaphore(max_concurrent_api)
 
-    results_by_axis: dict[str, list[tuple[str, str]]] = {
-        "visual_format": [],
-        "category": [],
-        "strategy": [],
+    axis_results: dict[str, list[tuple[str, str]]] = {
+        "visual_format": [], "category": [], "strategy": [],
     }
+    features_by_post: dict[int, str] = {}
+    per_post_results: dict[int, dict[str, str]] = {}
+    per_post_annotations: dict[int, dict[str, str]] = {}
+    per_post_captions: dict[int, str | None] = {}
 
     scopes_needed = {post.media_product_type for post in dev_opt_posts}
     prompts_cache = {
@@ -469,6 +489,7 @@ async def evaluate_full_dev_opt(
         nonlocal done
         annotation = annotations.get(post.ig_media_id)
         if not annotation:
+            done += 1
             return
 
         scope = post.media_product_type
@@ -501,10 +522,19 @@ async def evaluate_full_dev_opt(
             )
 
             pred = result.prediction
+            post_preds: dict[str, str] = {}
+            post_anns: dict[str, str] = {}
             for axis in ("visual_format", "category", "strategy"):
                 true_label = annotation[axis]
                 pred_label = getattr(pred, axis)
-                results_by_axis[axis].append((true_label, pred_label))
+                axis_results[axis].append((true_label, pred_label))
+                post_preds[axis] = pred_label
+                post_anns[axis] = true_label
+
+            features_by_post[post.ig_media_id] = features
+            per_post_results[post.ig_media_id] = post_preds
+            per_post_annotations[post.ig_media_id] = post_anns
+            per_post_captions[post.ig_media_id] = post.caption
 
         except Exception as exc:
             log.warning("evaluate_full_dev_opt: post %s failed: %s", post.ig_media_id, exc)
@@ -515,7 +545,14 @@ async def evaluate_full_dev_opt(
 
     await asyncio.gather(*[_process_post(post) for post in dev_opt_posts])
 
-    return results_by_axis
+    return FullEvalResult(
+        axis_results=axis_results,
+        features_by_post=features_by_post,
+        per_post_results=per_post_results,
+        per_post_annotations=per_post_annotations,
+        per_post_features=features_by_post,
+        per_post_captions=per_post_captions,
+    )
 
 
 async def evaluate_j_candidate_axis(
@@ -530,16 +567,22 @@ async def evaluate_j_candidate_axis(
     conn,
     max_concurrent_api: int = 20,
     on_progress: Callable[[int, int], None] | None = None,
+    eval_cache: "EvalCache | None" = None,
 ) -> list[tuple[str, str]]:
     """Re-classify seulement l'axe cible avec les instructions candidat.
 
     Utilise les features descripteur cachées (le descripteur est gelé).
     Retourne [(true_label, pred_label), ...] pour l'axe cible uniquement.
+
+    Si eval_cache est fourni, les résultats sont cachés par
+    (post_id, axis, prompt_hash) pour garantir le déterminisme de J.
     """
+    from milpo.eval_cache import EvalCache
+    from milpo.eval_cache import prompt_hash as compute_prompt_hash
+
     client = get_async_client()
     semaphore = asyncio.Semaphore(max_concurrent_api)
 
-    # Construire le prompt_state candidat
     candidate_prompt_state_instructions = {
         **base_prompt_state.instructions,
         (target_agent, target_scope): candidate_instructions,
@@ -551,31 +594,49 @@ async def evaluate_j_candidate_axis(
         for scope in scopes_needed
     }
 
-    # Labels pour l'axe cible
     target_labels_by_scope = {
         scope: labels_by_scope[scope][target_agent]
         for scope in scopes_needed
     }
 
+    # Compute prompt hash for cache key
+    p_hash = compute_prompt_hash(candidate_instructions)
+
     results: list[tuple[str, str]] = []
+    skipped_no_features = 0
+    cache_hits = 0
     total = len(dev_opt_posts)
     done = 0
 
     async def _classify_post(post: PostInput):
-        nonlocal done
+        nonlocal done, skipped_no_features, cache_hits
         annotation = annotations.get(post.ig_media_id)
         if not annotation:
+            done += 1
             return
 
-        # Filtrer par scope si le target est scopé
         if target_scope is not None and post.media_product_type != target_scope:
+            done += 1
             return
 
         features = cached_features.get(post.ig_media_id)
         if features is None:
+            skipped_no_features += 1
+            done += 1
             return
 
         scope = post.media_product_type
+        true_label = annotation[target_agent]
+
+        # Check eval cache first
+        if eval_cache is not None:
+            cached = eval_cache.get(post.ig_media_id, target_agent, p_hash, scope, "classifier")
+            if cached is not None:
+                results.append((true_label, cached))
+                cache_hits += 1
+                done += 1
+                return
+
         prompts = prompts_cache[scope]
         target_labels = target_labels_by_scope[scope]
 
@@ -598,8 +659,12 @@ async def evaluate_j_candidate_axis(
                 ),
                 timeout=60,
             )
-            true_label = annotation[target_agent]
             results.append((true_label, label))
+
+            # Store in eval cache
+            if eval_cache is not None:
+                eval_cache.put(post.ig_media_id, target_agent, p_hash, scope, "classifier", label)
+
         except Exception as exc:
             log.warning(
                 "evaluate_j_candidate_axis: post %s axis %s failed: %s",
@@ -611,5 +676,16 @@ async def evaluate_j_candidate_axis(
             on_progress(done, total)
 
     await asyncio.gather(*[_classify_post(post) for post in dev_opt_posts])
+
+    if skipped_no_features > 0:
+        log.warning(
+            "evaluate_j_candidate_axis: %d/%d posts skipped (no cached features)",
+            skipped_no_features, total,
+        )
+    if cache_hits > 0:
+        log.debug(
+            "evaluate_j_candidate_axis: %d cache hits / %d total",
+            cache_hits, len(results),
+        )
 
     return results

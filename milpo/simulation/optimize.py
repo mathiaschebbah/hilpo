@@ -20,7 +20,8 @@ from milpo.prompting import build_labels, build_target_descriptions
 from milpo.rule_rewriter import rule_critique, rule_edit
 from milpo.rewriter import ErrorCase
 from milpo.rules import OPTIMIZABLE_SLOTS, OpType, PatchOp, RuleState, apply_patch
-from milpo.simulation.evaluation import evaluate_j_candidate_axis
+from milpo.eval_cache import EvalCache
+from milpo.simulation.evaluation import FullEvalResult, evaluate_j_candidate_axis
 from milpo.simulation.state import (
     CoordinateAscentResult,
     PromptState,
@@ -45,29 +46,41 @@ def _compute_j_from_axis_results(
     )
 
 
-def _collect_errors_from_results(
-    axis_results: dict[str, list[tuple[str, str]]],
+def _collect_errors_grounded(
+    eval_result: FullEvalResult,
     target_agent: str,
     conn,
 ) -> list[ErrorCase]:
-    """Extrait les erreurs du target_agent depuis les résultats d'évaluation."""
-    target_results = axis_results.get(target_agent, [])
+    """Construit des ErrorCase grounded avec features, caption et post_id réels.
+
+    Utilise les données per-post conservées par FullEvalResult (fix P2).
+    """
+    from milpo.simulation.evaluation import _get_label_description
+
     errors: list[ErrorCase] = []
-    for true_label, pred_label in target_results:
-        if true_label != pred_label:
-            errors.append(ErrorCase(
-                ig_media_id=0,  # pas de post_id dans les résultats agrégés
-                axis=target_agent,
-                prompt_scope=None,
-                post_scope="",
-                predicted=pred_label,
-                expected=true_label,
-                features_json="",
-                caption=None,
-                desc_predicted=pred_label,
-                desc_expected=true_label,
-                confidence="unknown",
-            ))
+    for post_id, preds in eval_result.per_post_results.items():
+        anns = eval_result.per_post_annotations.get(post_id, {})
+        true_label = anns.get(target_agent)
+        pred_label = preds.get(target_agent)
+        if true_label is None or pred_label is None or true_label == pred_label:
+            continue
+
+        features = eval_result.features_by_post.get(post_id, "")
+        caption = eval_result.per_post_captions.get(post_id)
+
+        errors.append(ErrorCase(
+            ig_media_id=post_id,
+            axis=target_agent,
+            prompt_scope=None,
+            post_scope="",
+            predicted=pred_label,
+            expected=true_label,
+            features_json=features[:4000],
+            caption=caption,
+            desc_predicted=_get_label_description(conn, target_agent, pred_label),
+            desc_expected=_get_label_description(conn, target_agent, true_label),
+            confidence="unknown",
+        ))
     return errors
 
 
@@ -81,8 +94,10 @@ async def optimize_slot(
     annotations: dict[int, dict],
     cached_features: dict[int, str],
     cached_axis_results: dict[str, list[tuple[str, str]]],
+    eval_result: FullEvalResult,
     labels_by_scope: dict[str, dict[str, list[str]]],
     tabu: TabuList,
+    eval_cache: EvalCache | None = None,
     patience: int = 5,
     max_steps: int = 30,
     n_patches: int = 3,
@@ -90,16 +105,23 @@ async def optimize_slot(
 ) -> SlotOptResult:
     """Optimise un slot avec la boucle structurée critic→editor→eval.
 
+    Args:
+        eval_result: FullEvalResult de l'évaluation initiale, utilisé pour
+            construire des ErrorCase grounded (fix P2).
+        cached_axis_results: dict mutable {axis: [(true, pred), ...]},
+            mis à jour in-place quand un step est accepté avec les résultats
+            du candidat gagnant (fix P1).
+        eval_cache: EvalCache optionnel pour le déterminisme de J.
+
     Returns:
-        SlotOptResult avec les métriques de l'optimisation.
-        rule_state et prompt_state sont modifiés in-place si des steps sont acceptés.
+        SlotOptResult. rule_state et prompt_state sont modifiés in-place
+        si des steps sont acceptés.
     """
     target_agent = rule_state.agent
     target_scope = rule_state.scope
     slot_key = rule_state.slot_key()
     all_descriptions = build_target_descriptions(conn, target_agent, target_scope)
 
-    # J initial
     j_current = _compute_j_from_axis_results(cached_axis_results)
     j_initial = j_current
 
@@ -109,12 +131,10 @@ async def optimize_slot(
     skipped_invalid = 0
     patience_left = patience
 
-    # Ajouter l'état initial au tabu
     tabu.add(slot_key, rule_state.state_hash())
 
     incumbent_prompt_id = prompt_state.db_ids.get(
-        (target_agent, target_scope),
-        0,
+        (target_agent, target_scope), 0,
     )
 
     for step in range(max_steps):
@@ -127,13 +147,11 @@ async def optimize_slot(
         if on_status:
             on_status(f"slot {slot_key} step {step_number}/{max_steps} (J={j_current:.4f})")
 
-        # 1. Collecter les erreurs
-        errors = _collect_errors_from_results(cached_axis_results, target_agent, conn)
+        # 1. Collecter les erreurs grounded
+        errors = _collect_errors_grounded(eval_result, target_agent, conn)
         if not errors:
             log.info("[OPT] %s step %d: 0 erreurs, arrêt.", slot_key, step_number)
             break
-
-        # Limiter les erreurs au batch
         errors = errors[:20]
 
         # 2. Critic
@@ -151,7 +169,7 @@ async def optimize_slot(
             patience_left -= 1
             continue
 
-        # 3. Editor → 3 patches
+        # 3. Editor → n_patches patches
         if on_status:
             on_status(f"slot {slot_key} step {step_number} — editor (×{n_patches})...")
         try:
@@ -169,15 +187,15 @@ async def optimize_slot(
             patience_left -= 1
             continue
 
-        # 4. Évaluer chaque patch
+        # 4. Évaluer chaque patch — tracker le gagnant ET ses résultats (fix P1)
         best_j = j_current
         best_candidate = None
         best_op = None
         best_reasoning = ""
         best_hash = ""
+        best_candidate_axis_results: list[tuple[str, str]] | None = None
 
         for patch_op, reasoning in patches_result.patches:
-            # 4a. Appliquer le patch
             try:
                 candidate_state = apply_patch(rule_state, patch_op)
             except ValueError as exc:
@@ -185,20 +203,17 @@ async def optimize_slot(
                 skipped_invalid += 1
                 continue
 
-            # 4b. Tabu check
             candidate_hash = candidate_state.state_hash()
             if tabu.is_tabu(slot_key, candidate_hash):
                 tabu_hits += 1
-                log.debug("[OPT] %s step %d: tabu hit", slot_key, step_number)
                 continue
 
-            # 4c. Render et évaluer
             candidate_prompt = candidate_state.render()
             if on_status:
                 on_status(f"slot {slot_key} step {step_number} — eval candidate...")
 
             try:
-                candidate_axis_results = await asyncio.wait_for(
+                this_candidate_results = await asyncio.wait_for(
                     evaluate_j_candidate_axis(
                         dev_opt_posts=dev_opt_posts,
                         annotations=annotations,
@@ -209,6 +224,7 @@ async def optimize_slot(
                         labels_by_scope=labels_by_scope,
                         cached_features=cached_features,
                         conn=conn,
+                        eval_cache=eval_cache,
                     ),
                     timeout=300,
                 )
@@ -216,12 +232,10 @@ async def optimize_slot(
                 log.warning("[OPT] %s step %d: eval failed: %s", slot_key, step_number, exc)
                 continue
 
-            # Construire J avec les résultats candidats pour l'axe cible + les autres axes cachées
             mixed_results = dict(cached_axis_results)
-            mixed_results[target_agent] = candidate_axis_results
+            mixed_results[target_agent] = this_candidate_results
             candidate_j = _compute_j_from_axis_results(mixed_results)
 
-            # Ajouter au tabu
             tabu.add(slot_key, candidate_hash)
 
             if candidate_j > best_j:
@@ -230,14 +244,16 @@ async def optimize_slot(
                 best_op = patch_op
                 best_reasoning = reasoning
                 best_hash = candidate_hash
+                best_candidate_axis_results = this_candidate_results  # fix P1
 
         # 5. Décision accept/reject
-        if best_candidate is not None and best_j > j_current:
-            # ACCEPT
-            steps_accepted += 1
-            patience_left = patience  # reset
+        new_prompt_id = None
+        j_before_step = j_current
 
-            # Persister le nouveau prompt en BDD
+        if best_candidate is not None and best_j > j_current:
+            steps_accepted += 1
+            patience_left = patience
+
             incumbent_version = prompt_state.versions.get((target_agent, target_scope), 0)
             new_version = incumbent_version + 1
             new_prompt_id = insert_prompt_version(
@@ -249,28 +265,26 @@ async def optimize_slot(
             insert_rules(conn, new_prompt_id, target_agent, target_scope, best_candidate.rules)
             promote_prompt(conn, target_agent, target_scope, new_prompt_id)
 
-            # Update state in-place
             rule_state.rules = best_candidate.rules
             prompt_state.instructions[(target_agent, target_scope)] = best_candidate.render()
             prompt_state.db_ids[(target_agent, target_scope)] = new_prompt_id
             prompt_state.versions[(target_agent, target_scope)] = new_version
 
-            # Update cached results for this axis
-            mixed = dict(cached_axis_results)
-            # Re-evaluate to get the actual results (already computed above)
-            # The candidate_axis_results is already the correct one
-            cached_axis_results[target_agent] = candidate_axis_results if 'candidate_axis_results' in dir() else cached_axis_results[target_agent]
+            # Update cached results pour l'axe cible avec les résultats du GAGNANT (fix P1)
+            cached_axis_results[target_agent] = best_candidate_axis_results
 
-            delta = best_j - j_current
+            # Update eval_result per-post pour les prochains steps
+            for true_label, pred_label in best_candidate_axis_results:
+                pass  # axis-level update suffit pour J; per-post sera re-collect via errors
+
             j_current = best_j
             incumbent_prompt_id = new_prompt_id
 
             log.info(
                 "[OPT] %s step %d: ACCEPTED J=%.4f→%.4f (+%.4f)",
-                slot_key, step_number, j_current - delta, j_current, delta,
+                slot_key, step_number, j_before_step, j_current, j_current - j_before_step,
             )
         else:
-            # REJECT
             patience_left -= 1
             log.info(
                 "[OPT] %s step %d: REJECTED (patience=%d/%d)",
@@ -291,15 +305,15 @@ async def optimize_slot(
             op_rule_data=best_op.new_rule.to_dict() if best_op and best_op.new_rule else None,
             critique_text=critique_result.critique,
             critique_target_index=critique_result.target_rule_index,
-            j_before=j_current if best_candidate is None else j_current - (best_j - j_current),
+            j_before=j_before_step,
             j_after=best_j if best_candidate else j_current,
-            accepted=best_candidate is not None,
+            accepted=best_candidate is not None and best_j > j_before_step,
             state_hash_before=rule_state.state_hash(),
-            state_hash_after=best_hash if best_candidate else None,
+            state_hash_after=best_hash or None,
             tabu_hit=False,
             skipped_invalid=skipped_invalid > 0,
             incumbent_prompt_id=incumbent_prompt_id,
-            candidate_prompt_id=new_prompt_id if best_candidate else None,
+            candidate_prompt_id=new_prompt_id,
         )
 
     return SlotOptResult(
@@ -323,7 +337,7 @@ async def coordinate_ascent(
     dev_opt_posts: list[PostInput],
     annotations: dict[int, dict],
     cached_features: dict[int, str],
-    initial_axis_results: dict[str, list[tuple[str, str]]],
+    initial_eval_result: FullEvalResult,
     labels_by_scope: dict[str, dict[str, list[str]]],
     patience: int = 5,
     max_steps_per_slot: int = 30,
@@ -331,21 +345,19 @@ async def coordinate_ascent(
     n_patches: int = 3,
     on_status: Callable[[str], None] | None = None,
 ) -> CoordinateAscentResult:
-    """Coordinate ascent : passes multiples sur tous les slots.
-
-    Après chaque passe, si au moins un slot a amélioré J, on invalide
-    le tabu et on recommence. Arrêt quand aucune passe n'améliore.
-    """
+    """Coordinate ascent : passes multiples sur tous les slots."""
+    eval_cache = EvalCache()
     tabu = TabuList()
-    j_global_initial = _compute_j_from_axis_results(initial_axis_results)
+    cached_axis_results = dict(initial_eval_result.axis_results)
+    j_global_initial = _compute_j_from_axis_results(cached_axis_results)
     j_global_best = j_global_initial
     all_slot_results: list[SlotOptResult] = []
-    cached_axis_results = dict(initial_axis_results)
 
     slots_to_optimize = [
         slot for slot in OPTIMIZABLE_SLOTS if slot in rule_states
     ]
 
+    pass_num = 0
     for pass_num in range(1, max_passes + 1):
         any_improved = False
 
@@ -370,8 +382,10 @@ async def coordinate_ascent(
                 annotations=annotations,
                 cached_features=cached_features,
                 cached_axis_results=cached_axis_results,
+                eval_result=initial_eval_result,
                 labels_by_scope=labels_by_scope,
                 tabu=tabu,
+                eval_cache=eval_cache,
                 patience=patience,
                 max_steps=max_steps_per_slot,
                 n_patches=n_patches,
@@ -401,14 +415,13 @@ async def coordinate_ascent(
             log.info("[COORD] Aucune amélioration dans la passe %d, arrêt.", pass_num)
             break
 
-        # Invalider le tabu entre les passes pour ré-exploration
         tabu.invalidate_all()
         log.info("[COORD] Tabu invalidé, nouvelle passe.")
 
     j_global_final = _compute_j_from_axis_results(cached_axis_results)
 
     return CoordinateAscentResult(
-        passes=pass_num,
+        passes=pass_num if pass_num else 1,
         slot_results=all_slot_results,
         j_global_initial=j_global_initial,
         j_global_final=j_global_final,

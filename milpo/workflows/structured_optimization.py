@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -24,17 +25,89 @@ from milpo.dsl import compile_rule
 from milpo.gcs import sign_all_posts_media
 from milpo.inference import PostInput
 from milpo.objective import compute_j_components
-from milpo.persistence import create_run, fail_run, finish_run
 from milpo.prompting import build_labels
 from milpo.rules import OPTIMIZABLE_SLOTS, RuleState
 from milpo.rules_bootstrap import bootstrap_slot_rules, verify_bootstrap
-from milpo.simulation.evaluation import evaluate_full_dev_opt
+from milpo.simulation.evaluation import FullEvalResult, evaluate_full_dev_opt
 from milpo.simulation.optimize import coordinate_ascent
-from milpo.simulation.state import PromptState, build_run_metrics, load_prompt_state_from_db
+from milpo.simulation.state import PromptState, load_prompt_state_from_db
 
 console = Console()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("simulation")
+
+
+def _finish_structured_run(conn, run_id: int, metrics: dict) -> None:
+    """Marque un run d'optimisation structurée comme terminé.
+
+    Adapte le payload au schéma simulation_runs existant (fix P1 finish_run).
+    """
+    conn.execute(
+        """
+        UPDATE simulation_runs SET
+            status = 'completed', finished_at = NOW(),
+            final_accuracy_category = %s,
+            final_accuracy_visual_format = %s,
+            final_accuracy_strategy = %s,
+            prompt_iterations = %s,
+            total_api_calls = %s, total_cost_usd = %s,
+            config = COALESCE(config, '{}'::jsonb) || %s::jsonb
+        WHERE id = %s
+        """,
+        (
+            metrics.get("accuracy_category", 0),
+            metrics.get("accuracy_visual_format", 0),
+            metrics.get("accuracy_strategy", 0),
+            metrics.get("total_steps", 0),
+            metrics.get("total_api_calls", 0),
+            None,
+            json.dumps({k: v for k, v in metrics.items()
+                        if k not in ("accuracy_category", "accuracy_visual_format",
+                                     "accuracy_strategy", "total_api_calls")}),
+            run_id,
+        ),
+    )
+    conn.commit()
+
+
+def _fail_structured_run(conn, run_id: int, error: str) -> None:
+    """Marque un run d'optimisation structurée comme échoué."""
+    conn.execute(
+        """
+        UPDATE simulation_runs SET
+            status = 'failed', finished_at = NOW(),
+            config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('failure_reason', %s::text)
+        WHERE id = %s
+        """,
+        (error[:1000], run_id),
+    )
+    conn.commit()
+
+
+def _create_structured_run(conn, config: dict) -> int:
+    """Crée un run d'optimisation structurée."""
+    row = conn.execute(
+        """
+        INSERT INTO simulation_runs (seed, batch_size, config, status, started_at)
+        VALUES (42, 0, %s::jsonb, 'running', NOW())
+        RETURNING id
+        """,
+        (json.dumps(config),),
+    ).fetchone()
+    conn.commit()
+    return row["id"]
+
+
+def _j_components_from_axis_results(axis_results: dict[str, list[tuple[str, str]]]) -> dict[str, float]:
+    """Extrait les composantes J depuis les résultats par axe."""
+    return compute_j_components(
+        [t for t, _ in axis_results.get("visual_format", [])],
+        [p for _, p in axis_results.get("visual_format", [])],
+        [t for t, _ in axis_results.get("category", [])],
+        [p for _, p in axis_results.get("category", [])],
+        [t for t, _ in axis_results.get("strategy", [])],
+        [p for _, p in axis_results.get("strategy", [])],
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,46 +149,51 @@ async def run_structured_optimization(args) -> int:
         audit = audit_dev_split(conn)
         console.print(f"  ratio: {audit['ratio_opt']:.1%} opt / {1-audit['ratio_opt']:.1%} holdout")
 
-        # Annotations
-        annotations = load_dev_annotations(conn, split=args.split)
-        opt_annotations = {pid: ann for pid, ann in annotations.items() if pid in opt_ids}
-        console.print(f"  annotations dev-opt: {len(opt_annotations)}")
+        # Annotations (tout le split)
+        all_annotations = load_dev_annotations(conn, split=args.split)
+        opt_annotations = {pid: ann for pid, ann in all_annotations.items() if pid in opt_ids}
+        holdout_annotations = {pid: ann for pid, ann in all_annotations.items() if pid in holdout_ids}
+        console.print(f"  annotations dev-opt: {len(opt_annotations)}, dev-holdout: {len(holdout_annotations)}")
 
-        # Load posts
-        from milpo.db import load_dev_posts, load_posts_media
-        raw_posts = load_dev_posts(conn, limit=args.limit, split=args.split)
-        raw_posts = [p for p in raw_posts if p["ig_media_id"] in opt_ids]
+        # Load ALL posts (opt + holdout) pour signer les URLs
+        from milpo.db import load_dev_posts, load_posts_media, load_post_media
+        all_raw_posts = load_dev_posts(conn, limit=None, split=args.split)
+        annotated_ids = set(all_annotations.keys())
+        all_raw_posts = [p for p in all_raw_posts if p["ig_media_id"] in annotated_ids]
 
-        console.print(f"  signing GCS URLs for {len(raw_posts)} posts...")
-        from milpo.db import load_post_media
+        console.print(f"  signing GCS URLs for {len(all_raw_posts)} posts...")
         signed_by_post = sign_all_posts_media(
-            raw_posts, load_post_media, conn, max_workers=20,
+            all_raw_posts, load_post_media, conn, max_workers=20,
             load_all_media_fn=load_posts_media,
         )
 
-        post_inputs: list[PostInput] = []
-        for post in raw_posts:
+        all_post_inputs: dict[int, PostInput] = {}
+        for post in all_raw_posts:
             signed = signed_by_post.get(post["ig_media_id"], [])
             if not signed:
                 continue
-            post_inputs.append(PostInput(
+            pi = PostInput(
                 ig_media_id=post["ig_media_id"],
                 media_product_type=post["media_product_type"],
                 media_urls=[url for url, _ in signed],
                 media_types=[mt for _, mt in signed],
                 caption=post["caption"],
-            ))
+            )
+            all_post_inputs[post["ig_media_id"]] = pi
+
+        opt_post_inputs = [all_post_inputs[pid] for pid in opt_ids if pid in all_post_inputs]
+        holdout_post_inputs = [all_post_inputs[pid] for pid in holdout_ids if pid in all_post_inputs]
 
         if args.limit:
-            post_inputs = post_inputs[:args.limit]
+            opt_post_inputs = opt_post_inputs[:args.limit]
 
-        console.print(f"  posts prêts: {len(post_inputs)}")
+        console.print(f"  posts prêts: {len(opt_post_inputs)} opt, {len(holdout_post_inputs)} holdout")
 
         # Prompt state
         prompt_state = load_prompt_state_from_db(conn, logger=log)
         labels_by_scope = {scope: build_labels(conn, scope) for scope in ("FEED", "REELS")}
 
-        # Bootstrap rules pour les slots optimisables
+        # Bootstrap rules
         console.print("\n[bold]Bootstrap v0 → skeleton + DSL rules[/bold]\n")
         rule_states: dict[tuple[str, str | None], RuleState] = {}
         for agent, scope in OPTIMIZABLE_SLOTS:
@@ -128,9 +206,11 @@ async def run_structured_optimization(args) -> int:
 
             console.print(f"  {agent}/{scope or 'all'}: {report['n_rules']} rules "
                           f"({report['valid_rules']} valid, {report['invalid_rules']} invalid)")
-            for i, rule in enumerate(rule_state.rules):
+            for i, rule in enumerate(rule_state.rules[:5]):
                 compiled = compile_rule(rule)
                 console.print(f"    [{i}] {rule.rule_type.value}: {compiled[:80]}")
+            if rule_state.rule_count() > 5:
+                console.print(f"    ... ({rule_state.rule_count() - 5} more)")
 
         # Create run
         run_config = {
@@ -141,20 +221,22 @@ async def run_structured_optimization(args) -> int:
             "opt_max_passes": args.opt_max_passes,
             "n_patches": args.n_patches,
             "dry_run": args.dry_run,
+            "n_opt_posts": len(opt_post_inputs),
+            "n_holdout_posts": len(holdout_post_inputs),
         }
-        run_id = create_run(conn, run_config)
+        run_id = _create_structured_run(conn, run_config)
         console.print(f"\n  simulation_run_id = {run_id}")
 
-        # ── 2. ÉVALUATION INITIALE ────────────────────────────────────
+        # ── 2. ÉVALUATION INITIALE sur dev-opt ────────────────────────
         console.print("\n[bold]Phase 2 : ÉVALUATION INITIALE sur dev-opt[/bold]\n")
-        console.print(f"  Classifying {len(post_inputs)} posts...")
+        console.print(f"  Classifying {len(opt_post_inputs)} posts...")
 
         def _on_eval_progress(done: int, total: int):
             if done % 10 == 0 or done == total:
-                console.print(f"    {done}/{total} posts classified", end="\r")
+                console.print(f"    {done}/{total}", end="\r")
 
-        initial_axis_results = await evaluate_full_dev_opt(
-            dev_opt_posts=post_inputs,
+        initial_eval: FullEvalResult = await evaluate_full_dev_opt(
+            dev_opt_posts=opt_post_inputs,
             annotations=opt_annotations,
             prompt_state=prompt_state,
             labels_by_scope=labels_by_scope,
@@ -163,47 +245,44 @@ async def run_structured_optimization(args) -> int:
             on_progress=_on_eval_progress,
         )
 
-        # Cache descriptor features pour la réutilisation
-        # (dans l'évaluation candidate, on ne rappelle pas le descripteur)
-        cached_features: dict[int, str] = {}
-        # TODO: extraire features du résultat initial pour le cache
-        # Pour l'instant, evaluate_j_candidate_axis gère ses propres features
+        # P0 fix : peupler cached_features depuis l'évaluation initiale
+        cached_features: dict[int, str] = dict(initial_eval.features_by_post)
+        console.print(f"  cached features: {len(cached_features)} posts")
 
-        j_components = compute_j_components(
-            [t for t, _ in initial_axis_results.get("visual_format", [])],
-            [p for _, p in initial_axis_results.get("visual_format", [])],
-            [t for t, _ in initial_axis_results.get("category", [])],
-            [p for _, p in initial_axis_results.get("category", [])],
-            [t for t, _ in initial_axis_results.get("strategy", [])],
-            [p for _, p in initial_axis_results.get("strategy", [])],
-        )
-
-        console.print(f"\n  J_initial = {j_components['J']:.4f}")
-        console.print(f"    macroF1_vf  = {j_components['macroF1_vf']:.4f}")
-        console.print(f"    macroF1_cat = {j_components['macroF1_cat']:.4f}")
-        console.print(f"    acc_strat   = {j_components['acc_strat']:.4f}")
+        j_init = _j_components_from_axis_results(initial_eval.axis_results)
+        console.print(f"\n  J_initial = {j_init['J']:.4f}")
+        console.print(f"    macroF1_vf  = {j_init['macroF1_vf']:.4f}")
+        console.print(f"    macroF1_cat = {j_init['macroF1_cat']:.4f}")
+        console.print(f"    acc_strat   = {j_init['acc_strat']:.4f}")
 
         if args.dry_run:
             console.print("\n[yellow]--dry-run : arrêt après évaluation initiale.[/yellow]")
-            metrics = {"j_initial": j_components["J"], **j_components}
-            finish_run(conn, run_id, metrics)
+            _finish_structured_run(conn, run_id, {
+                "accuracy_category": j_init["macroF1_cat"],
+                "accuracy_visual_format": j_init["macroF1_vf"],
+                "accuracy_strategy": j_init["acc_strat"],
+                "total_api_calls": 0,
+                "j_initial": j_init["J"],
+                "j_final": j_init["J"],
+                "total_steps": 0,
+            })
             return run_id
 
         # ── 3. OPTIMISATION ────────────────────────────────────────────
         console.print("\n[bold]Phase 3 : COORDINATE ASCENT[/bold]\n")
 
         def _on_opt_status(msg: str):
-            console.print(f"  {msg}", end="\r")
+            console.print(f"  {msg}")
 
         ascent_result = await coordinate_ascent(
             conn=conn,
             run_id=run_id,
             rule_states=rule_states,
             prompt_state=prompt_state,
-            dev_opt_posts=post_inputs,
+            dev_opt_posts=opt_post_inputs,
             annotations=opt_annotations,
             cached_features=cached_features,
-            initial_axis_results=initial_axis_results,
+            initial_eval_result=initial_eval,
             labels_by_scope=labels_by_scope,
             patience=args.opt_patience,
             max_steps_per_slot=args.opt_max_steps,
@@ -212,8 +291,28 @@ async def run_structured_optimization(args) -> int:
             on_status=_on_opt_status,
         )
 
-        # ── 4. RÉSULTATS ──────────────────────────────────────────────
-        console.print("\n[bold]Phase 4 : RÉSULTATS[/bold]\n")
+        # ── 4. VALIDATION HOLDOUT ─────────────────────────────────────
+        console.print("\n[bold]Phase 4 : VALIDATION sur dev-holdout[/bold]\n")
+        console.print(f"  Classifying {len(holdout_post_inputs)} holdout posts...")
+
+        holdout_eval: FullEvalResult = await evaluate_full_dev_opt(
+            dev_opt_posts=holdout_post_inputs,
+            annotations=holdout_annotations,
+            prompt_state=prompt_state,
+            labels_by_scope=labels_by_scope,
+            conn=conn,
+            run_id=run_id,
+            on_progress=_on_eval_progress,
+        )
+
+        j_holdout = _j_components_from_axis_results(holdout_eval.axis_results)
+        console.print(f"\n  J_holdout = {j_holdout['J']:.4f}")
+        console.print(f"    macroF1_vf  = {j_holdout['macroF1_vf']:.4f}")
+        console.print(f"    macroF1_cat = {j_holdout['macroF1_cat']:.4f}")
+        console.print(f"    acc_strat   = {j_holdout['acc_strat']:.4f}")
+
+        # ── 5. RÉSULTATS ──────────────────────────────────────────────
+        console.print("\n[bold]Phase 5 : RÉSULTATS[/bold]\n")
 
         elapsed = time.monotonic() - t0
 
@@ -224,7 +323,7 @@ async def run_structured_optimization(args) -> int:
         table.add_column("J_initial")
         table.add_column("J_final")
         table.add_column("Delta")
-        table.add_column("Tabu hits")
+        table.add_column("Tabu")
 
         for r in ascent_result.slot_results:
             delta = r.j_final - r.j_initial
@@ -240,10 +339,10 @@ async def run_structured_optimization(args) -> int:
 
         console.print(table)
         console.print(f"\n  Passes: {ascent_result.passes}")
-        console.print(f"  J_global: {ascent_result.j_global_initial:.4f} → {ascent_result.j_global_final:.4f}")
-        console.print(f"  J_global_best: {ascent_result.j_global_best:.4f}")
-        console.print(f"  Durée: {elapsed:.0f}s ({elapsed/60:.1f} min)")
-        console.print(f"  simulation_run_id = {run_id}")
+        console.print(f"  J_opt:     {ascent_result.j_global_initial:.4f} → {ascent_result.j_global_final:.4f}")
+        console.print(f"  J_holdout: {j_holdout['J']:.4f}")
+        console.print(f"  Durée:     {elapsed:.0f}s ({elapsed/60:.1f} min)")
+        console.print(f"  run_id:    {run_id}")
 
         # Prompts finaux
         console.print("\n  Prompts finaux :")
@@ -258,15 +357,18 @@ async def run_structured_optimization(args) -> int:
                 compiled = compile_rule(rule)
                 console.print(f"    [{i}] {compiled[:100]}")
 
-        metrics = {
-            "j_initial": ascent_result.j_global_initial,
-            "j_final": ascent_result.j_global_final,
-            "j_best": ascent_result.j_global_best,
+        _finish_structured_run(conn, run_id, {
+            "accuracy_category": j_holdout["macroF1_cat"],
+            "accuracy_visual_format": j_holdout["macroF1_vf"],
+            "accuracy_strategy": j_holdout["acc_strat"],
+            "total_api_calls": 0,
+            "j_opt_initial": ascent_result.j_global_initial,
+            "j_opt_final": ascent_result.j_global_final,
+            "j_holdout": j_holdout["J"],
             "passes": ascent_result.passes,
             "total_steps": sum(r.steps_taken for r in ascent_result.slot_results),
             "total_accepted": sum(r.steps_accepted for r in ascent_result.slot_results),
-        }
-        finish_run(conn, run_id, metrics)
+        })
         return run_id
 
     except (KeyboardInterrupt, SystemExit):
@@ -274,7 +376,7 @@ async def run_structured_optimization(args) -> int:
         if run_id is not None:
             try:
                 conn.rollback()
-                fail_run(conn, run_id, "interrupted", {})
+                _fail_structured_run(conn, run_id, "interrupted")
             except Exception:
                 pass
         sys.exit(1)
@@ -283,7 +385,7 @@ async def run_structured_optimization(args) -> int:
         if run_id is not None:
             try:
                 conn.rollback()
-                fail_run(conn, run_id, str(exc), {})
+                _fail_structured_run(conn, run_id, str(exc))
             except Exception:
                 pass
         raise
