@@ -87,6 +87,21 @@ def get_async_oracle_client() -> AsyncAnthropic | None:
     return _client_singleton
 
 
+_ORACLE_ERA_BLOCK_POST_2024 = """# Cadrage temporel — post PUBLIÉ EN 2024 OU APRÈS
+
+Applique le **test du viewer Instagram** dans ton raisonnement (step 2) :
+imagine un utilisateur qui scrolle sans lire la caption. S'il s'arrêterait
+pour la beauté visuelle, la beauté prime → probable post_mood/shooting/reel_mood.
+
+La taxonomie moderne (≥ 2024) reflète des codes éditoriaux où la beauté
+visuelle prime souvent sur l'information textuelle."""
+
+_ORACLE_ERA_BLOCK_PRE_2024 = ""  # Pas d'instructions additionnelles pour les posts legacy.
+# Même raisonnement que côté classifier : ne rien injecter = pas de bruit.
+# Le LLM s'appuie sur la taxonomie neutre + les exclusions déjà présentes
+# dans les descriptions.
+
+
 def _build_oracle_user_message(
     *,
     features_json: str,
@@ -103,6 +118,13 @@ def _build_oracle_user_message(
         else ""
     )
 
+    era_block = ""
+    if posted_at is not None:
+        if posted_at.year >= 2024:
+            era_block = _ORACLE_ERA_BLOCK_POST_2024 + "\n\n"
+        else:
+            era_block = _ORACLE_ERA_BLOCK_PRE_2024 + "\n\n"
+
     samples_block = ""
     if classifier_samples:
         samples_block = "\n**Diversité des samples self-consistency (vote classifieur)** :\n"
@@ -110,7 +132,7 @@ def _build_oracle_user_message(
             samples_block += f"- sample {i}: {s.get('label', '?')}\n"
 
     return f"""\
-# Taxonomie visual_format pour le scope courant
+{era_block}# Taxonomie visual_format pour le scope courant
 
 {descriptions_taxonomiques}
 
