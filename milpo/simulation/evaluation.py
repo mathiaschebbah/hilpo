@@ -425,3 +425,191 @@ async def async_multi_evaluate(
         incumbent_records=incumbent_records,
         incumbent_arm_id=incumbent_arm_id,
     )
+
+
+# ── Évaluation J pour l'optimisation structurée ───────────────────────────
+
+
+async def evaluate_full_dev_opt(
+    dev_opt_posts: list[PostInput],
+    annotations: dict[int, dict],
+    prompt_state: PromptState,
+    labels_by_scope: dict[str, dict[str, list[str]]],
+    conn,
+    run_id: int,
+    max_concurrent_api: int = 20,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> dict[str, list[tuple[str, str]]]:
+    """Classify ALL dev-opt posts avec le prompt_state courant.
+
+    Retourne {axis: [(true_label, pred_label), ...]} pour les 3 axes.
+    Le descripteur est appelé une seule fois par post (features cachées).
+    """
+    from milpo.eval_cache import prompt_hash
+
+    client = get_async_client()
+    semaphore = asyncio.Semaphore(max_concurrent_api)
+
+    results_by_axis: dict[str, list[tuple[str, str]]] = {
+        "visual_format": [],
+        "category": [],
+        "strategy": [],
+    }
+
+    scopes_needed = {post.media_product_type for post in dev_opt_posts}
+    prompts_cache = {
+        scope: build_prompt_set(conn, scope, prompt_state.instructions)
+        for scope in scopes_needed
+    }
+
+    total = len(dev_opt_posts)
+    done = 0
+
+    async def _process_post(post: PostInput):
+        nonlocal done
+        annotation = annotations.get(post.ig_media_id)
+        if not annotation:
+            return
+
+        scope = post.media_product_type
+        prompts = prompts_cache[scope]
+        routing = route_post(scope)
+        labels = labels_by_scope[scope]
+
+        try:
+            features, desc_log = await asyncio.wait_for(
+                async_call_descriptor(
+                    client=client,
+                    model=routing["model_descriptor"],
+                    media_urls=post.media_urls,
+                    media_types=post.media_types,
+                    caption=post.caption,
+                    instructions=prompts.descriptor_instructions,
+                    descriptions_taxonomiques=prompts.descriptor_descriptions,
+                    semaphore=semaphore,
+                ),
+                timeout=120,
+            )
+
+            result = await asyncio.wait_for(
+                async_classify_with_features(
+                    post, features, desc_log, prompts,
+                    labels["category"], labels["visual_format"], labels["strategy"],
+                    client, semaphore,
+                ),
+                timeout=120,
+            )
+
+            pred = result.prediction
+            for axis in ("visual_format", "category", "strategy"):
+                true_label = annotation[axis]
+                pred_label = getattr(pred, axis)
+                results_by_axis[axis].append((true_label, pred_label))
+
+        except Exception as exc:
+            log.warning("evaluate_full_dev_opt: post %s failed: %s", post.ig_media_id, exc)
+
+        done += 1
+        if on_progress:
+            on_progress(done, total)
+
+    await asyncio.gather(*[_process_post(post) for post in dev_opt_posts])
+
+    return results_by_axis
+
+
+async def evaluate_j_candidate_axis(
+    dev_opt_posts: list[PostInput],
+    annotations: dict[int, dict],
+    target_agent: str,
+    target_scope: str | None,
+    candidate_instructions: str,
+    base_prompt_state: PromptState,
+    labels_by_scope: dict[str, dict[str, list[str]]],
+    cached_features: dict[int, str],
+    conn,
+    max_concurrent_api: int = 20,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> list[tuple[str, str]]:
+    """Re-classify seulement l'axe cible avec les instructions candidat.
+
+    Utilise les features descripteur cachées (le descripteur est gelé).
+    Retourne [(true_label, pred_label), ...] pour l'axe cible uniquement.
+    """
+    client = get_async_client()
+    semaphore = asyncio.Semaphore(max_concurrent_api)
+
+    # Construire le prompt_state candidat
+    candidate_prompt_state_instructions = {
+        **base_prompt_state.instructions,
+        (target_agent, target_scope): candidate_instructions,
+    }
+
+    scopes_needed = {post.media_product_type for post in dev_opt_posts}
+    prompts_cache = {
+        scope: build_prompt_set(conn, scope, candidate_prompt_state_instructions)
+        for scope in scopes_needed
+    }
+
+    # Labels pour l'axe cible
+    target_labels_by_scope = {
+        scope: labels_by_scope[scope][target_agent]
+        for scope in scopes_needed
+    }
+
+    results: list[tuple[str, str]] = []
+    total = len(dev_opt_posts)
+    done = 0
+
+    async def _classify_post(post: PostInput):
+        nonlocal done
+        annotation = annotations.get(post.ig_media_id)
+        if not annotation:
+            return
+
+        # Filtrer par scope si le target est scopé
+        if target_scope is not None and post.media_product_type != target_scope:
+            return
+
+        features = cached_features.get(post.ig_media_id)
+        if features is None:
+            return
+
+        scope = post.media_product_type
+        prompts = prompts_cache[scope]
+        target_labels = target_labels_by_scope[scope]
+
+        target_instr = {
+            "category": prompts.category_instructions,
+            "visual_format": prompts.visual_format_instructions,
+            "strategy": prompts.strategy_instructions,
+        }[target_agent]
+        target_desc = {
+            "category": prompts.category_descriptions,
+            "visual_format": prompts.visual_format_descriptions,
+            "strategy": prompts.strategy_descriptions,
+        }[target_agent]
+
+        try:
+            label, _ = await asyncio.wait_for(
+                async_classify_target_only(
+                    post, features, target_agent, target_labels,
+                    target_instr, target_desc, client, semaphore,
+                ),
+                timeout=60,
+            )
+            true_label = annotation[target_agent]
+            results.append((true_label, label))
+        except Exception as exc:
+            log.warning(
+                "evaluate_j_candidate_axis: post %s axis %s failed: %s",
+                post.ig_media_id, target_agent, exc,
+            )
+
+        done += 1
+        if on_progress:
+            on_progress(done, total)
+
+    await asyncio.gather(*[_classify_post(post) for post in dev_opt_posts])
+
+    return results

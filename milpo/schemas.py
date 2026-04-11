@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -152,3 +152,66 @@ class ClassifierDecision(StrictBaseModel):
 
     label: str
     confidence: Literal["high", "medium", "low"]
+
+
+# ── Schémas pour l'optimisation structurée à patches DSL ─────────
+
+
+class RuleCritiquePayload(StrictBaseModel):
+    """Sortie du critic règles : 1 critique + index de la règle ciblée."""
+
+    critique: str
+    target_rule_index: Optional[int] = None
+
+    @field_validator("critique")
+    @classmethod
+    def validate_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("critique must not be blank")
+        return value
+
+
+class DSLRulePayload(StrictBaseModel):
+    """Payload d'une règle DSL pour le structured output de l'editor."""
+
+    rule_type: Literal[
+        "signal_to_label", "disambiguation", "priority", "fallback", "caption_policy"
+    ]
+    signals: Optional[list[str]] = None
+    label: Optional[str] = None
+    label_a: Optional[str] = None
+    label_b: Optional[str] = None
+    criterion: Optional[str] = None
+    high_signal: Optional[str] = None
+    low_signal: Optional[str] = None
+    caption_mode: Optional[str] = None
+
+
+class RulePatchPayload(StrictBaseModel):
+    """Un patch typé proposé par l'editor."""
+
+    op_type: Literal["add_rule", "remove_rule", "replace_rule", "reorder_rule"]
+    index: Optional[int] = None
+    new_rule: Optional[DSLRulePayload] = None
+    new_position: Optional[int] = None
+    reasoning: str
+
+    @field_validator("reasoning")
+    @classmethod
+    def validate_reasoning_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reasoning must not be blank")
+        return value
+
+
+class RulePatchesPayload(StrictBaseModel):
+    """Sortie de l'editor règles : exactement 3 patches."""
+
+    patches: list[RulePatchPayload]
+
+    @field_validator("patches")
+    @classmethod
+    def validate_patches(cls, value: list[RulePatchPayload]) -> list[RulePatchPayload]:
+        if not value:
+            raise ValueError("patches must not be empty")
+        return value

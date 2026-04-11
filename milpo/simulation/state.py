@@ -78,6 +78,32 @@ def build_run_metrics(
     }
 
 
+@dataclass
+class SlotOptResult:
+    """Résultat de l'optimisation d'un slot."""
+
+    agent: str
+    scope: str | None
+    steps_taken: int
+    steps_accepted: int
+    j_initial: float
+    j_final: float
+    tabu_hits: int
+    patience_exhausted: bool
+    skipped_invalid: int
+
+
+@dataclass
+class CoordinateAscentResult:
+    """Résultat du coordinate ascent sur tous les slots."""
+
+    passes: int
+    slot_results: list[SlotOptResult]
+    j_global_initial: float
+    j_global_final: float
+    j_global_best: float
+
+
 def load_prompt_state_from_db(conn, logger: logging.Logger | None = None) -> PromptState:
     """Charge l'état initial du PromptState depuis la BDD."""
     prompt_records, prompt_ids, prompt_versions = load_active_prompt_records(conn, PROMPT_KEYS)
