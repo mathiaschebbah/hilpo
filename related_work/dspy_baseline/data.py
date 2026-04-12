@@ -30,7 +30,8 @@ from milpo.db import (
 
 
 FEATURE_EXTRACTION_RUN_NAME = "feature_cache_dev"
-B0_RUN_ID = 7  # Run B0 stable qui contient les features test (cf. CLAUDE.md v2.28)
+B0_RUN_ID = 95  # Run pipeline Flash Lite v1 (test set, 437 posts, GT corrigée)
+DEV_FEATURE_RUN_ID = 91  # Run dev prod (381 posts ≥2024, features descripteur)
 
 
 # ── Chargement des examples ─────────────────────────────────────
@@ -46,33 +47,12 @@ class ExampleSource:
 
 
 def _resolve_feature_run_id(conn, split: str) -> int:
-    """Retourne le run_id qui contient les features cachées pour ce split.
-
-    Convention :
-    - dev  → run dont config.name = 'feature_cache_dev' (généré par extract_features_dev.py)
-    - test → run B0 stable (id=7, généré par run_baseline.py --prompts v0)
-    """
+    """Retourne le run_id qui contient les features pour ce split."""
     if split == "test":
         return B0_RUN_ID
-
-    if split != "dev":
-        raise ValueError(f"split inconnu : {split!r}")
-
-    row = conn.execute(
-        """
-        SELECT id FROM simulation_runs
-        WHERE config->>'name' = %s
-        ORDER BY id DESC LIMIT 1
-        """,
-        (FEATURE_EXTRACTION_RUN_NAME,),
-    ).fetchone()
-    if row is None:
-        raise RuntimeError(
-            f"Aucun run de feature extraction trouvé pour le split dev "
-            f"(config.name = '{FEATURE_EXTRACTION_RUN_NAME}'). "
-            f"Lancer d'abord scripts/extract_features_dev.py."
-        )
-    return row["id"]
+    if split == "dev":
+        return DEV_FEATURE_RUN_ID
+    raise ValueError(f"split inconnu : {split!r}")
 
 
 def load_examples(

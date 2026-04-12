@@ -49,7 +49,15 @@ from pathlib import Path
 import dspy
 from dspy.teleprompt import MIPROv2
 
-from milpo.config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, MODEL_CLASSIFIER
+from milpo.config import (
+    ANTHROPIC_API_KEY,
+    GOOGLE_API_KEY,
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    MODEL_CLASSIFIER,
+    OPENAI_API_KEY,
+    OPENROUTER_API_KEY,
+)
 from milpo.db import get_conn
 
 from related_work.dspy_baseline.data import (
@@ -64,11 +72,11 @@ from related_work.dspy_baseline.pipeline import build_program
 # ── Modèles ─────────────────────────────────────────────────────
 
 
-# Task LM : strictement le même que MILPO (cf. milpo/config.py:MODEL_CLASSIFIER)
-TASK_MODEL = f"openrouter/{MODEL_CLASSIFIER}"
+# Task LM : Google AI direct (même modèle que MILPO pipeline)
+TASK_MODEL = f"gemini/{MODEL_CLASSIFIER}"
 
-# Proposer LM : Claude Opus 4.6 (haute capacité de raisonnement, 1M context)
-PROPOSER_MODEL = "openrouter/anthropic/claude-opus-4-6"
+# Proposer LM : GPT-5.4 via OpenAI direct (même modèle que le rewriter MILPO)
+PROPOSER_MODEL = "openai/gpt-5.4"
 
 
 logging.basicConfig(
@@ -114,18 +122,15 @@ def _compiled_path(mode: str, axis: str, scope: str | None) -> Path:
 
 
 def configure_dspy_lms(task_lm_kwargs: dict | None = None) -> tuple[dspy.LM, dspy.LM]:
-    """Configure les deux LMs DSPy : task et proposer.
-
-    Returns:
-        Tuple (task_lm, proposer_lm).
-    """
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY non définie dans .env")
+    """Configure les deux LMs DSPy : task (Google AI) et proposer (Anthropic)."""
+    if not GOOGLE_API_KEY:
+        raise RuntimeError("GOOGLE_API_KEY non définie dans .env")
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY non définie dans .env")
 
     task_kwargs = {
-        "api_key": OPENROUTER_API_KEY,
-        "api_base": OPENROUTER_BASE_URL,
-        "temperature": 0.1,  # = MILPO
+        "api_key": GOOGLE_API_KEY,
+        "temperature": 0.1,
         "max_tokens": 1024,
     }
     if task_lm_kwargs:
@@ -134,9 +139,8 @@ def configure_dspy_lms(task_lm_kwargs: dict | None = None) -> tuple[dspy.LM, dsp
     task_lm = dspy.LM(TASK_MODEL, **task_kwargs)
     proposer_lm = dspy.LM(
         PROPOSER_MODEL,
-        api_key=OPENROUTER_API_KEY,
-        api_base=OPENROUTER_BASE_URL,
-        temperature=1.0,  # explorer pour la génération de candidats
+        api_key=OPENAI_API_KEY,
+        temperature=1.0,
         max_tokens=8192,
     )
 
@@ -195,6 +199,17 @@ def main():
         default=8,
         help="Nombre de threads pour les évaluations parallèles MIPROv2.",
     )
+    parser.add_argument(
+        "--seed-from-db",
+        action="store_true",
+        help="Seed MIPROv2 avec le prompt actif human_v0 au lieu de partir de zéro.",
+    )
+    parser.add_argument(
+        "--max-demos",
+        type=int,
+        default=0,
+        help="Nombre max de labeled demos par prompt (default: 0 = zero-shot).",
+    )
     args = parser.parse_args()
 
     # Validation des combinaisons
@@ -251,6 +266,17 @@ def main():
     )
     log.info("Programme construit : %s", type(program).__name__)
 
+    # 4b. Seed avec le prompt actif human_v0 si demandé
+    if args.seed_from_db:
+        from milpo.db import get_active_prompt
+        seed_row = get_active_prompt(conn, args.axis, args.scope, source="human_v0")
+        if seed_row:
+            seed_instructions = seed_row["content"]
+            program.predict.signature = program.predict.signature.with_instructions(seed_instructions)
+            log.info("Seed avec prompt human_v0 (id=%d, %d chars)", seed_row["id"], len(seed_instructions))
+        else:
+            log.warning("Pas de prompt human_v0 trouvé pour seed — démarrage from scratch")
+
     # 5. Configurer MIPROv2
     metric = accuracy_metric(args.axis)
     teleprompter = MIPROv2(
@@ -268,8 +294,8 @@ def main():
         program,
         trainset=trainset,
         valset=valset,
-        max_bootstrapped_demos=0,  # zero-shot only — pas de few-shot demos
-        max_labeled_demos=0,
+        max_bootstrapped_demos=args.max_demos,
+        max_labeled_demos=args.max_demos,
         requires_permission_to_run=False,
     )
 

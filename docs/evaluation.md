@@ -225,22 +225,53 @@ Tous les runs utilisent :
 
 La seule variable est le croisement architecture × modèle × harness.
 
-### Tableau d'ablation (visual_format accuracy)
+### Tableau d'ablation (visual_format accuracy — test set 437 posts, GT corrigée)
 
-| | E2E naïf | E2E harness (k=3 + oracle) | Pipeline (desc + clf + k=3 + oracle + VETO) |
+| | E2E naïf | E2E harness (k=3 + oracle) | Pipeline (v1 VETO + k=3 + oracle) |
 |---|---|---|---|
-| **Flash Lite** ($0.25/$1.50) | à mesurer | (optionnel) | à mesurer |
-| **Flash** ($0.50/$3.00) | **84.2%** (run 93, $2.59) | **à mesurer** (run 94, ~$9) | **87.6%** (run 90, $9.18) |
+| **Flash Lite** ($0.25/$1.50) | **71.6%** (run 96, $1.29) | **77.8%** (run 97, ~$5) | **87.0%** (run 95, $6.86) |
+| **Flash** ($0.50/$3.00) | **84.2%** (run 93, $2.59) | **85.4%** (run 94, ~$9.40) | **87.6%** (run 90, $9.21) |
 
-### Runs associés
+#### Détail FEED / REELS
 
-| Run ID | Mode | Modèle vf | Config |
-|---|---|---|---|
-| 90 | Pipeline (v1 VETO) | gemini-3-flash-preview | `--prompts active` + env override vf |
-| 93 | E2E naïf | gemini-3-flash-preview | `--prompts active --e2e` + env override |
-| 94 | E2E harness | gemini-3-flash-preview | `--prompts active --e2e-harness` + env override |
-| (à venir) | Pipeline (v1 VETO) | gemini-3.1-flash-lite-preview | `--prompts active` (sans env override) |
-| (à venir) | E2E naïf | gemini-3.1-flash-lite-preview | `--prompts active --e2e` (sans env override) |
+| Run | Mode | Modèle | vf global | vf FEED (n=372) | vf REELS (n=65) | cat | strat |
+|---|---|---|---|---|---|---|---|
+| 90 | Pipeline (v1 VETO) | Flash (vf only) | 87.6% | 88.98% | 80.00% | 88.6% | 96.1% |
+| 93 | E2E naïf | Flash | 84.2% | 85.22% | 78.46% | 87.2% | 96.1% |
+| 94 | E2E harness | Flash | 85.4% | 86.29% | 80.00% | 87.0% | 95.7% |
+| 95 | Pipeline (v1 VETO) | Flash Lite | 87.0% | 88.44% | 78.46% | 88.6% | 94.3% |
+| 96 | E2E naïf | Flash Lite | 71.6% | 72.04% | 69.23% | 86.5% | 94.3% |
+| 97 | E2E harness | Flash Lite | 77.8% | 79.03% | 70.77% | 86.0% | 94.7% |
+
+#### Holdout dev prod (non-audité)
+
+| Run | Mode | Modèle | vf | cat | strat | n |
+|---|---|---|---|---|---|---|
+| 91 | Pipeline (v1 VETO) | Flash (vf) + Flash Lite | 83.2% | 87.7% | 99.5% | 381 |
+
+#### DSPy MIPROv2 (prompts optimisés automatiquement)
+
+| Run | Mode | Instructions vf | Modèle | vf | cat | strat |
+|---|---|---|---|---|---|---|
+| 95 | Pipeline | Manuelles (v1 VETO) | Flash Lite | 87.0% | 88.6% | 94.3% |
+| 98 | Pipeline | DSPy light (non seedé) | Flash Lite | à évaluer | | |
+| (en cours) | Pipeline | DSPy medium (seedé + 5 demos) | Flash Lite | **à évaluer** | | |
+
+### Runs associés — index complet
+
+| Run ID | Date | Mode | Modèle vf | Prompts | Split | Notes |
+|---|---|---|---|---|---|---|
+| 68 | 2026-04-11 | Pipeline (v0) | Flash Lite | v0 humain | test | Baseline zero-shot, 72.09% vf (recalculé vs GT corrigée) |
+| 89 | 2026-04-11 | Pipeline (critère unifié sans VETO) | Flash | active | test | 85.1% vf, première mesure critère unifié |
+| 90 | 2026-04-11 | Pipeline (v1 VETO) | Flash (vf) | active | test | 87.6% vf, meilleur pipeline Flash |
+| 91 | 2026-04-12 | Pipeline (v1 VETO) | Flash (vf) + FL | active | dev ≥2024 | 83.2% vf, holdout non-audité (381 posts) |
+| 93 | 2026-04-12 | E2E naïf | Flash | active | test | 84.2% vf, baseline E2E |
+| 94 | 2026-04-12 | E2E harness (k=3 + oracle) | Flash | active | test | 85.4% vf |
+| 95 | 2026-04-12 | Pipeline (v1 VETO) | Flash Lite | active | test | 87.0% vf, pipeline Flash Lite propre |
+| 96 | 2026-04-12 | E2E naïf | Flash Lite | active | test | 71.6% vf |
+| 97 | 2026-04-12 | E2E harness (k=3 + oracle) | Flash Lite | active | test | 77.8% vf |
+| 98 | 2026-04-12 | Pipeline | Flash Lite | dspy_constrained (light) | test | DSPy non seedé, à évaluer |
+| (en cours) | 2026-04-12 | Pipeline | Flash Lite | dspy_constrained (medium, seedé) | test | DSPy seedé + 5 demos |
 
 ### Lectures attendues
 

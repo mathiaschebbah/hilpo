@@ -99,6 +99,8 @@ def load_prompt_record(conn, agent: str, scope: str | None, prompt_mode: str) ->
         row = get_prompt_version(conn, agent, scope, version=0, source="human_v0")
     elif prompt_mode in DSPY_MODES:
         row = get_active_prompt(conn, agent, scope, source=prompt_mode)
+        if row is None:
+            row = get_active_prompt(conn, agent, scope, source="human_v0")
     else:
         raise ValueError(f"Mode prompt inconnu : {prompt_mode!r}")
 
