@@ -4,8 +4,9 @@
 # macOS
 .DS_Store
 
-# LaTeX build artifacts
+# LaTeX (mémoire rédigé hors repo)
 docs/*.pdf
+docs/*.tex
 docs/*.aux
 docs/*.log
 docs/*.out
