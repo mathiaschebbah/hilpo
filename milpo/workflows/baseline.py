@@ -64,6 +64,22 @@ def build_parser() -> argparse.ArgumentParser:
             "Ex: --since 2024-01-01 pour évaluer uniquement la prod."
         ),
     )
+    parser.add_argument(
+        "--e2e",
+        action="store_true",
+        help=(
+            "Mode end-to-end : un seul appel multimodal par post (images + caption → 3 axes). "
+            "Utilise le modèle MILPO_MODEL_CLASSIFIER_VISUAL_FORMAT."
+        ),
+    )
+    parser.add_argument(
+        "--e2e-harness",
+        action="store_true",
+        help=(
+            "Mode E2E + harness : k=3 appels à T=0.3, vote majoritaire, "
+            "oracle Sonnet 4.6 sur vf medium/low confidence."
+        ),
+    )
     return parser
 
 
@@ -99,17 +115,32 @@ async def run_baseline(args) -> int:
     raw_posts = conn.execute(query, query_params).fetchall()
     log.info("Posts %s : %d", suffix, len(raw_posts))
 
-    from milpo.config import MODEL_CLASSIFIER, MODEL_DESCRIPTOR_FEED, MODEL_DESCRIPTOR_REELS
+    from milpo.config import (
+        MODEL_CLASSIFIER,
+        MODEL_CLASSIFIER_VISUAL_FORMAT,
+        MODEL_DESCRIPTOR_FEED,
+        MODEL_DESCRIPTOR_REELS,
+    )
+
+    is_e2e = args.e2e or args.e2e_harness
+    e2e_model = MODEL_CLASSIFIER_VISUAL_FORMAT if is_e2e else None
+    if args.e2e:
+        suffix = f"e2e_{suffix}"
+    elif args.e2e_harness:
+        suffix = f"e2e_harness_{suffix}"
 
     run_id = create_run(conn, {
         "name": f"{run_label}_{args.prompts}_{suffix}",
         "split": args.split,
         "since": args.since,
         "prompts": args.prompts,
+        "e2e": args.e2e,
+        "e2e_harness": args.e2e_harness,
         "models": {
             "descriptor_feed": MODEL_DESCRIPTOR_FEED,
             "descriptor_reels": MODEL_DESCRIPTOR_REELS,
             "classifier": MODEL_CLASSIFIER,
+            **({"e2e": e2e_model} if e2e_model else {}),
         },
     })
     log.info("simulation_run id=%d", run_id)
@@ -151,7 +182,7 @@ async def run_baseline(args) -> int:
     }
     labels_by_scope = {scope: build_labels(conn, scope) for scope in ("FEED", "REELS")}
 
-    log.info("Classification en cours...")
+    log.info("Classification en cours%s...", " (E2E)" if args.e2e else "")
 
     def on_progress(done: int, total: int, errors: int) -> None:
         elapsed = time.monotonic() - t0
@@ -168,14 +199,38 @@ async def run_baseline(args) -> int:
             flush=True,
         )
 
-    results = await async_classify_batch(
-        posts=post_inputs,
-        prompts_by_scope=prompts_by_scope,
-        labels_by_scope=labels_by_scope,
-        max_concurrent_api=20,
-        max_concurrent_posts=10,
-        on_progress=on_progress,
-    )
+    if args.e2e_harness:
+        from milpo.e2e_inference import async_classify_e2e_harness_batch
+
+        results = await async_classify_e2e_harness_batch(
+            posts=post_inputs,
+            prompts_by_scope=prompts_by_scope,
+            labels_by_scope=labels_by_scope,
+            model=e2e_model,
+            max_concurrent=10,
+            k=3,
+            on_progress=on_progress,
+        )
+    elif args.e2e:
+        from milpo.e2e_inference import async_classify_e2e_batch
+
+        results = await async_classify_e2e_batch(
+            posts=post_inputs,
+            prompts_by_scope=prompts_by_scope,
+            labels_by_scope=labels_by_scope,
+            model=e2e_model,
+            max_concurrent=10,
+            on_progress=on_progress,
+        )
+    else:
+        results = await async_classify_batch(
+            posts=post_inputs,
+            prompts_by_scope=prompts_by_scope,
+            labels_by_scope=labels_by_scope,
+            max_concurrent_api=20,
+            max_concurrent_posts=10,
+            on_progress=on_progress,
+        )
     errors = len(post_inputs) - len(results)
     print()
     log.info("Classifiés : %d / %d (erreurs : %d)", len(results), len(post_inputs), errors)

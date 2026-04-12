@@ -205,6 +205,59 @@ Architecture : DSPy est utilisé **uniquement comme générateur de strings d'in
 
 1. **A0 vs B0 accuracy** : l'approche agentique (CoT + few-shot dynamique + advisor) améliore-t-elle la classification par rapport à la pipeline fixe ? Cible : 90% overall.
 
+## Ablation factorielle : architecture × modèle × harness
+
+### Objectif
+
+Isoler l'effet de chaque composant sur la performance de classification. Trois facteurs croisés :
+
+1. **Architecture** : Pipeline multi-étapes (descripteur → classifieurs spécialisés) vs E2E (un seul appel multimodal images + caption → 3 axes)
+2. **Modèle** : Gemini 3.1 Flash Lite ($0.25/$1.50 par M tokens) vs Gemini 3 Flash Preview ($0.50/$3.00)
+3. **Harness** : Naïf (1 appel, T=0) vs Harness (self-consistency k=3 à T=0.3 + oracle cascade Sonnet 4.6 sur vf medium/low confidence)
+
+### Protocole
+
+Tous les runs utilisent :
+- Le même **test set** (437 posts annotés, split test)
+- La même **GT corrigée** (17 re-annotations data-centric post audit)
+- Les mêmes **prompts actifs** en BDD (visual_format FEED v1 avec VETO pour la pipeline, descriptions taxonomiques neutres pour le E2E)
+- Le même **routage FEED/REELS** déterministe
+
+La seule variable est le croisement architecture × modèle × harness.
+
+### Tableau d'ablation (visual_format accuracy)
+
+| | E2E naïf | E2E harness (k=3 + oracle) | Pipeline (desc + clf + k=3 + oracle + VETO) |
+|---|---|---|---|
+| **Flash Lite** ($0.25/$1.50) | à mesurer | (optionnel) | à mesurer |
+| **Flash** ($0.50/$3.00) | **84.2%** (run 93, $2.59) | **à mesurer** (run 94, ~$9) | **87.6%** (run 90, $9.18) |
+
+### Runs associés
+
+| Run ID | Mode | Modèle vf | Config |
+|---|---|---|---|
+| 90 | Pipeline (v1 VETO) | gemini-3-flash-preview | `--prompts active` + env override vf |
+| 93 | E2E naïf | gemini-3-flash-preview | `--prompts active --e2e` + env override |
+| 94 | E2E harness | gemini-3-flash-preview | `--prompts active --e2e-harness` + env override |
+| (à venir) | Pipeline (v1 VETO) | gemini-3.1-flash-lite-preview | `--prompts active` (sans env override) |
+| (à venir) | E2E naïf | gemini-3.1-flash-lite-preview | `--prompts active --e2e` (sans env override) |
+
+### Lectures attendues
+
+1. **Delta architecture (E2E harness vs Pipeline, même modèle, même harness)** : mesure la valeur ajoutée de la décomposition descripteur → classifieurs. Si le delta est faible (<2pp), l'architecture multi-étapes est une complexité non-justifiée — le modèle multimodal sait faire le même travail en un seul appel.
+
+2. **Delta harness (E2E naïf vs E2E harness, même modèle, même architecture)** : mesure la valeur ajoutée de la self-consistency + oracle cascade, isolée de tout effet architectural ou de prompt engineering. C'est le test de l'hypothèse "inference-time compute scaling".
+
+3. **Delta modèle (Flash Lite vs Flash, même architecture, même harness)** : mesure le gain d'un modèle plus capable, à architecture constante.
+
+4. **Interaction architecture × modèle** : si le delta architecture est fort sur Flash Lite mais faible sur Flash, l'architecture compense les faiblesses du petit modèle. La pipeline serait alors un "compensateur de capacité" — utile quand le modèle est faible, superflu quand il est capable.
+
+### Hypothèse centrale
+
+> L'architecture multi-étapes (pipeline) et le prompt engineering spécialisé (VETO, exemples, contre-exemples) sont des **compensateurs de faiblesse du modèle**. Plus le modèle est capable, moins ces composants ajoutent de valeur. Le seul levier **universel** (efficace quel que soit le modèle) est le **harness engineering** : self-consistency et oracle cascade.
+
+Cette hypothèse est testable via le tableau d'ablation. Si confirmée, la contribution du mémoire passe de "on a construit une pipeline complexe" à "on a identifié empiriquement quel composant apporte réellement de la valeur dans une pipeline de classification multimodale LLM".
+
 2. **A0 coût vs B0 coût** : le ratio qualité/coût est-il défendable ? B0 coûte — ; A0 devrait coûter 5-15× plus cher. Le surcoût est-il justifié par le gain de précision ?
 
 3. **Corrélation advisor ↔ difficulté** : sur quels posts Haiku appelle-t-il l'advisor ? Corrélation avec la confidence, les formats rares, les erreurs de B0 ?
