@@ -38,7 +38,7 @@ RUN_LABELS = {
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Évalue la pipeline MILPO sur le split test")
+    parser = argparse.ArgumentParser(description="Évalue la pipeline MILPO sur un split annoté")
     parser.add_argument(
         "--prompts",
         choices=tuple(RUN_LABELS.keys()),
@@ -49,6 +49,21 @@ def build_parser() -> argparse.ArgumentParser:
             "dspy_constrained/dspy_free=issus de related_work/dspy_baseline."
         ),
     )
+    parser.add_argument(
+        "--split",
+        choices=("test", "dev"),
+        default="test",
+        help="Split à évaluer (sample_posts.split). Défaut: test.",
+    )
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help=(
+            "Filtre posts publiés à partir de cette date (YYYY-MM-DD). "
+            "Ex: --since 2024-01-01 pour évaluer uniquement la prod."
+        ),
+    )
     return parser
 
 
@@ -57,29 +72,39 @@ async def run_baseline(args) -> int:
     t0 = time.monotonic()
     run_label, prompt_label = RUN_LABELS[args.prompts]
 
+    suffix = args.split
+    if args.since:
+        suffix = f"{args.split}_since_{args.since}"
     log.info("=" * 55)
-    log.info("%s — Évaluation %s sur split test", run_label, prompt_label)
+    log.info("%s — Évaluation %s sur split %s", run_label, prompt_label, suffix)
     log.info("=" * 55)
 
-    raw_posts = conn.execute(
-        """
+    query_params: dict = {"split": args.split}
+    query = """
         SELECT p.ig_media_id, p.caption,
                p.media_type::text AS media_type,
                p.media_product_type::text AS media_product_type,
                p.timestamp AS posted_at
         FROM sample_posts sp
         JOIN posts p ON p.ig_media_id = sp.ig_media_id
-        WHERE sp.split = 'test'
-        ORDER BY sp.presentation_order
-        """
-    ).fetchall()
-    log.info("Posts test : %d", len(raw_posts))
+        JOIN annotations a ON a.ig_media_id = p.ig_media_id
+        WHERE sp.split = %(split)s
+          AND a.visual_format_id IS NOT NULL
+    """
+    if args.since:
+        query += " AND p.timestamp >= %(since)s::timestamp"
+        query_params["since"] = args.since
+    query += " ORDER BY sp.presentation_order"
+
+    raw_posts = conn.execute(query, query_params).fetchall()
+    log.info("Posts %s : %d", suffix, len(raw_posts))
 
     from milpo.config import MODEL_CLASSIFIER, MODEL_DESCRIPTOR_FEED, MODEL_DESCRIPTOR_REELS
 
     run_id = create_run(conn, {
-        "name": f"{run_label}_{args.prompts}_test",
-        "split": "test",
+        "name": f"{run_label}_{args.prompts}_{suffix}",
+        "split": args.split,
+        "since": args.since,
         "prompts": args.prompts,
         "models": {
             "descriptor_feed": MODEL_DESCRIPTOR_FEED,
