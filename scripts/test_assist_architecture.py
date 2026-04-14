@@ -39,7 +39,7 @@ Pour chaque question, réponds factuellement et en détail. Décris ce que tu vo
 
 # --- Prompt Classifieur (Template B) ---
 
-CLASSIFIER_SYSTEM_TEMPLATE = """Tu es un classificateur visual_format pour le média Views (@viewsfrance).
+CLASSIFIER_SYSTEM = """Tu es un classificateur visual_format pour le média Views (@viewsfrance).
 Ta tâche est de classifier un post Instagram en fonction de l'axe visual_format.
 Tu classes des formats éditoriaux, pas des thèmes. Privilégie les signaux de forme sur le sujet traité.
 
@@ -54,8 +54,7 @@ Dans reasoning, explicite :
 4. Les hésitations rencontrées.
 Puis choisis le label.
 
-Le label doit venir de l'enum fournie.
-En cas de doute persistant, choisis {fallback}."""
+Le label doit venir de l'enum fournie."""
 
 
 TEST_POSTS = [
@@ -107,9 +106,7 @@ def call_alma(client, media_urls: list[tuple[str, str]], caption: str, scope: st
 def call_classifier(client, alma_output: str, caption: str, scope: str, labels: list[str], posted_at=None) -> tuple[str, str]:
     """Appelle le classifieur avec la sortie d'Alma + taxonomie."""
     taxonomy = render_taxonomy_for_scope(scope)
-    fallback = "post_mood" if scope == "FEED" else "reel_mood"
-
-    system = CLASSIFIER_SYSTEM_TEMPLATE.format(fallback=fallback)
+    system = CLASSIFIER_SYSTEM
 
     user_text = f"""Voici les descriptions des classes à appliquer :
 
@@ -176,10 +173,10 @@ def main():
     client = get_client()
     client.timeout = 120.0
 
-    # Charger les labels par scope
-    from milpo.db import load_visual_formats
-    labels_feed = [f["name"] for f in load_visual_formats(conn, "FEED")]
-    labels_reels = [f["name"] for f in load_visual_formats(conn, "REELS")]
+    # Charger les labels par scope depuis les YAML (source unique)
+    from milpo.taxonomy_renderer import load_taxonomy_yaml
+    labels_feed = [c["class"] for c in load_taxonomy_yaml("FEED")]
+    labels_reels = [c["class"] for c in load_taxonomy_yaml("REELS")]
 
     # Dossier de traces
     traces_dir = Path(__file__).resolve().parent.parent / "data" / "traces_assist_test"
