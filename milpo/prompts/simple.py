@@ -31,17 +31,15 @@ PERSONA = alma.PERSONA
 
 CONTEXT = (
     "Tu reçois les images ou la vidéo d'un post Instagram de Views, sa caption,\n"
-    "et son audio si applicable, ainsi qu'une grille d'observation et les\n"
-    "descriptions des classes pour chaque axe.\n\n"
+    "et son audio si applicable.\n\n"
     "Tu dois classifier ce post sur trois axes : visual_format, category, strategy.\n"
-    "La caption et les images sont à analyser de manière conjointe. Les descriptions\n"
-    "des classes sont ta grille de lecture : tu dois t'y référer et raisonner en\n"
-    "fonction d'elles. Privilégie les signaux de forme sur le sujet traité pour visual_format."
+    "La caption et les images sont à analyser de manière conjointe. Privilégie\n"
+    "les signaux de forme sur le sujet traité pour visual_format."
 )
 
 OUTPUT_RULES = (
     "Dans reasoning, explicite pour chaque axe :\n"
-    "1. Les signaux observés dans les images, la caption et la grille d'observation.\n"
+    "1. Les signaux observés dans les images et la caption.\n"
     "2. Les règles SIGNAL_OBLIGATOIRE et EXCLUT appliquées.\n"
     "3. Les hésitations rencontrées.\n"
     "Puis choisis un label par axe. Chaque label doit venir de l'enum correspondante fournie."
