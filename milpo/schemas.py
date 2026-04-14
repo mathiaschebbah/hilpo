@@ -171,6 +171,83 @@ class ClassifierDecision(StrictBaseModel):
     confidence: Literal["high", "medium", "low"]
 
 
+# ── Schéma pour le classifieur multimodal simple (mode --simple) ──────────
+
+
+def build_simple_response_schema(
+    vf_labels: list[str],
+    cat_labels: list[str],
+    strat_labels: list[str],
+) -> dict:
+    """Schéma strict (reasoning + 3 labels + confidence) pour le classifieur simple.
+
+    Chaque axe a son propre enum. reasoning est placé en premier pour forcer
+    un chain-of-thought structuré avant la décision (Wei et al. 2022).
+    """
+
+    return {
+        "type": "object",
+        "properties": {
+            "reasoning": {
+                "type": "string",
+                "description": (
+                    "Raisonnement explicite avant de décider des labels, "
+                    "axe par axe. Cite les signaux observés et applique les "
+                    "règles SIGNAL_OBLIGATOIRE et EXCLUT de la taxonomie."
+                ),
+            },
+            "visual_format": {"type": "string", "enum": vf_labels},
+            "category": {"type": "string", "enum": cat_labels},
+            "strategy": {"type": "string", "enum": strat_labels},
+            "confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+            },
+        },
+        "required": [
+            "reasoning",
+            "visual_format",
+            "category",
+            "strategy",
+            "confidence",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def build_simple_tool(
+    vf_labels: list[str],
+    cat_labels: list[str],
+    strat_labels: list[str],
+) -> dict:
+    """Construit la définition tool/function pour le classifieur simple."""
+
+    return {
+        "type": "function",
+        "function": {
+            "name": "classify_post_multi",
+            "description": "Classifie le post sur les trois axes en un seul appel.",
+            "parameters": build_simple_response_schema(
+                vf_labels, cat_labels, strat_labels
+            ),
+        },
+    }
+
+
+class SimpleDecision(StrictBaseModel):
+    """Décision structurée du classifieur multimodal simple (3 axes en un appel).
+
+    Utilisée pour valider les arguments parsés depuis tool_call.function.arguments
+    en mode --simple.
+    """
+
+    reasoning: str = ""
+    visual_format: str
+    category: str
+    strategy: str
+    confidence: Literal["high", "medium", "low"]
+
+
 # ── Schémas pour l'optimisation structurée à patches DSL ─────────
 
 

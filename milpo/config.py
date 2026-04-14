@@ -36,6 +36,12 @@ MODEL_CLASSIFIER_VISUAL_FORMAT = os.environ.get(
     "MILPO_MODEL_CLASSIFIER_VISUAL_FORMAT", MODEL_CLASSIFIER
 )
 
+# Mode --simple : un seul appel multimodal ASSIST (images + caption + 3
+# taxonomies + questions ASSIST → 3 labels). Fallback sur l'override
+# visual_format parce que c'est le modèle qui doit encaisser l'axe le plus
+# difficile en plus des images.
+MODEL_SIMPLE = os.environ.get("MILPO_MODEL_SIMPLE", MODEL_CLASSIFIER_VISUAL_FORMAT)
+
 # Conservée uniquement parce que `related_work/dspy_baseline/optimize.py`
 # l'utilise pour son proposer model (et pour sa task LM OpenAI-compatible).
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")

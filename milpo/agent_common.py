@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from milpo.prompts import alma, classifier
-from milpo.schemas import ClassifierDecision
-from milpo.taxonomy_renderer import render_questions_for_scope
+from milpo.prompts import alma, classifier, simple
+from milpo.schemas import ClassifierDecision, SimpleDecision
+from milpo.taxonomy_renderer import (
+    render_questions_for_scope,
+    render_taxonomy_for_scope,
+)
 
 
 def build_descriptor_messages(
@@ -60,6 +63,41 @@ def build_classifier_messages(
     ]
 
 
+def build_simple_messages(
+    media_urls: list[str],
+    media_types: list[str],
+    caption: str | None,
+    post_scope: str,
+    posted_at: datetime | None = None,
+) -> list[dict]:
+    """Construit les messages ASSIST pour le classifieur simple (1 appel multimodal)."""
+    del media_types  # Gemini accepte les vidéos comme image_url aussi.
+
+    scope = post_scope.upper()
+    rendered_questions = render_questions_for_scope(scope)
+    vf_taxonomy = render_taxonomy_for_scope(scope)
+    cat_taxonomy = render_taxonomy_for_scope("CATEGORY")
+    strat_taxonomy = render_taxonomy_for_scope("STRATEGY")
+
+    intro = simple.build_user_intro(
+        rendered_questions=rendered_questions,
+        vf_taxonomy=vf_taxonomy,
+        cat_taxonomy=cat_taxonomy,
+        strat_taxonomy=strat_taxonomy,
+    )
+    content: list[dict] = [{"type": "text", "text": intro}]
+    for url in media_urls:
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    content.append(
+        {"type": "text", "text": simple.build_user_caption(caption, posted_at)}
+    )
+
+    return [
+        {"role": "system", "content": simple.build_system()},
+        {"role": "user", "content": content},
+    ]
+
+
 def _normalize_label(label: str) -> str:
     """Normalise un label pour comparaison : retire accents + lowercase.
 
@@ -74,6 +112,17 @@ def _normalize_label(label: str) -> str:
     return stripped.lower()
 
 
+def _match_label(raw: str, labels: list[str], axis: str) -> str:
+    """Valide un label contre un enum avec fallback accent-insensible."""
+    if raw in labels:
+        return raw
+    target = _normalize_label(raw)
+    for valid_label in labels:
+        if _normalize_label(valid_label) == target:
+            return valid_label
+    raise RuntimeError(f"Classifier {axis}: label invalide '{raw}' (hors enum)")
+
+
 def parse_classifier_arguments(arguments: str, axis: str, labels: list[str]) -> tuple[str, str, str]:
     """Parse et valide les arguments d'un tool_call de classifieur.
 
@@ -84,13 +133,25 @@ def parse_classifier_arguments(arguments: str, axis: str, labels: list[str]) -> 
     normalisation accent-insensible (ex : "société" → matche "societe").
     """
     parsed = ClassifierDecision.model_validate_json(arguments)
-    if parsed.label in labels:
-        return parsed.label, parsed.confidence, parsed.reasoning
+    label = _match_label(parsed.label, labels, axis)
+    return label, parsed.confidence, parsed.reasoning
 
-    # Fallback : match accent-insensible
-    normalized_target = _normalize_label(parsed.label)
-    for valid_label in labels:
-        if _normalize_label(valid_label) == normalized_target:
-            return valid_label, parsed.confidence, parsed.reasoning
 
-    raise RuntimeError(f"Classifier {axis}: label invalide '{parsed.label}' (hors enum)")
+def parse_simple_arguments(
+    arguments: str,
+    vf_labels: list[str],
+    cat_labels: list[str],
+    strat_labels: list[str],
+) -> tuple[str, str, str, str, str]:
+    """Parse et valide les arguments d'un tool_call du classifieur simple.
+
+    Retourne (visual_format, category, strategy, confidence, reasoning).
+    """
+    parsed = SimpleDecision.model_validate_json(arguments)
+    return (
+        _match_label(parsed.visual_format, vf_labels, "visual_format"),
+        _match_label(parsed.category, cat_labels, "category"),
+        _match_label(parsed.strategy, strat_labels, "strategy"),
+        parsed.confidence,
+        parsed.reasoning,
+    )
