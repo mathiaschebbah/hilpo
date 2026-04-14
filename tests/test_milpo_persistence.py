@@ -11,13 +11,7 @@ from milpo.persistence.classification import (
     persist_api_calls,
     persist_pipeline_predictions,
 )
-from milpo.persistence.runs import (
-    create_run,
-    fail_run,
-    finish_extraction_run,
-    finish_run,
-    get_or_create_extraction_run,
-)
+from milpo.persistence.runs import create_run, fail_run, finish_run
 
 
 def _features() -> str:
@@ -156,32 +150,6 @@ class RunLifecycleTests(unittest.TestCase):
         conn.commit.assert_called_once()
         sql = conn.execute.call_args[0][0]
         self.assertIn("failed", sql)
-
-    def test_get_or_create_extraction_run_returns_existing(self) -> None:
-        conn = self._mock_conn(returning={"id": 99})
-        run_id = get_or_create_extraction_run(conn)
-        self.assertEqual(run_id, 99)
-        # Only one execute (the SELECT), no INSERT
-        self.assertEqual(conn.execute.call_count, 1)
-
-    def test_get_or_create_extraction_run_creates_when_absent(self) -> None:
-        conn = MagicMock()
-        # First SELECT returns None, second INSERT returns the new id
-        conn.execute.return_value.fetchone.side_effect = [None, {"id": 100}]
-        run_id = get_or_create_extraction_run(conn)
-        self.assertEqual(run_id, 100)
-        self.assertEqual(conn.execute.call_count, 2)
-
-    def test_finish_extraction_run_updates_config(self) -> None:
-        conn = self._mock_conn()
-        finish_extraction_run(conn, 99, n_processed=50, n_skipped=10)
-        conn.execute.assert_called_once()
-        conn.commit.assert_called_once()
-        params = conn.execute.call_args[0][1]
-        payload = json.loads(params[0])
-        self.assertEqual(payload["n_processed"], 50)
-        self.assertEqual(payload["n_skipped_already_cached"], 10)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 
 
-FEATURE_EXTRACTION_RUN_NAME = "feature_cache_dev"
-
-
 def create_run(conn, config: dict) -> int:
     """Crée un run de simulation/baseline avec le payload config fourni."""
     row = conn.execute(
@@ -75,57 +72,3 @@ def fail_run(conn, run_id: int, error_message: str, metrics: dict):
     conn.commit()
 
 
-def get_or_create_extraction_run(
-    conn,
-    run_name: str = FEATURE_EXTRACTION_RUN_NAME,
-) -> int:
-    """Retourne l'id du run de feature extraction dev (existant ou nouveau)."""
-    row = conn.execute(
-        """
-        SELECT id FROM simulation_runs
-        WHERE config->>'name' = %s
-        ORDER BY id DESC LIMIT 1
-        """,
-        (run_name,),
-    ).fetchone()
-    if row is not None:
-        return row["id"]
-
-    row = conn.execute(
-        """
-        INSERT INTO simulation_runs (seed, batch_size, config, status, started_at)
-        VALUES (42, 0, %s::jsonb, 'running', NOW())
-        RETURNING id
-        """,
-        (json.dumps({
-            "name": run_name,
-            "kind": "feature_extraction",
-            "split": "dev",
-            "description": (
-                "Cache des features descripteur pour les posts dev annotés. "
-                "Permet à DSPy et autres méthodes d'optimisation d'éviter de "
-                "réappeler le descripteur multimodal à chaque itération."
-            ),
-        }),),
-    ).fetchone()
-    conn.commit()
-    return row["id"]
-
-
-def finish_extraction_run(conn, run_id: int, n_processed: int, n_skipped: int) -> None:
-    conn.execute(
-        """
-        UPDATE simulation_runs
-        SET status = 'completed', finished_at = NOW(),
-            config = config || %s::jsonb
-        WHERE id = %s
-        """,
-        (
-            json.dumps({
-                "n_processed": n_processed,
-                "n_skipped_already_cached": n_skipped,
-            }),
-            run_id,
-        ),
-    )
-    conn.commit()
