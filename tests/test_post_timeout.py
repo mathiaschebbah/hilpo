@@ -33,6 +33,7 @@ def _make_classify_post_mock(slow_ids: set[int], delay: float = 10.0):
         strategy_labels,
         client,
         semaphore,
+        **kwargs,
     ):
         if post.ig_media_id in slow_ids:
             await asyncio.sleep(delay)
@@ -130,6 +131,7 @@ class PostTimeoutTests(unittest.IsolatedAsyncioTestCase):
             strategy_labels,
             client,
             semaphore,
+            **kwargs,
         ):
             if post.ig_media_id == 2:
                 raise RuntimeError("API exploded")

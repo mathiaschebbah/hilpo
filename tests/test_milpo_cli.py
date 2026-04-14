@@ -79,14 +79,21 @@ class DispatchTests(unittest.TestCase):
         )
 
     def test_models_config_alma_keys(self) -> None:
-        config = _models_config("alma")
+        config = _models_config("alma", None)
         self.assertIn("descriptor_feed", config)
         self.assertIn("classifier", config)
         self.assertIn("classifier_visual_format", config)
 
     def test_models_config_simple_keys(self) -> None:
-        config = _models_config("simple")
+        config = _models_config("simple", None)
         self.assertEqual(set(config), {"simple"})
+
+    def test_models_config_override_propagates(self) -> None:
+        alma = _models_config("alma", "gemini-3-flash-preview")
+        for value in alma.values():
+            self.assertEqual(value, "gemini-3-flash-preview")
+        simple = _models_config("simple", "gemini-3-flash-preview")
+        self.assertEqual(simple["simple"], "gemini-3-flash-preview")
 
 
 class RunClassificationWiringTests(unittest.IsolatedAsyncioTestCase):
@@ -119,6 +126,9 @@ class RunClassificationWiringTests(unittest.IsolatedAsyncioTestCase):
                 "media_type": "IMAGE",
                 "media_product_type": "FEED",
                 "posted_at": None,
+                "gt_category": "news",
+                "gt_visual_format": "post_news",
+                "gt_strategy": "awareness",
             }
         ]
         mock_get_conn.return_value = conn
@@ -148,6 +158,7 @@ class RunClassificationWiringTests(unittest.IsolatedAsyncioTestCase):
                 limit=None,
                 since=None,
                 no_persist=False,
+                model=None,
             )
         )
 
@@ -181,6 +192,9 @@ class RunClassificationWiringTests(unittest.IsolatedAsyncioTestCase):
                 "media_type": "IMAGE",
                 "media_product_type": "FEED",
                 "posted_at": None,
+                "gt_category": "news",
+                "gt_visual_format": "post_news",
+                "gt_strategy": "awareness",
             }
         ]
         mock_get_conn.return_value = conn
@@ -205,6 +219,7 @@ class RunClassificationWiringTests(unittest.IsolatedAsyncioTestCase):
                 limit=5,
                 since=None,
                 no_persist=True,
+                model=None,
             )
         )
 

@@ -40,12 +40,19 @@ from milpo.config import (
 from milpo.db import get_conn, load_post_media, load_posts_media
 from milpo.gcs import sign_all_posts_media
 from milpo.inference import (
+    PipelineResult,
     PostInput,
     async_classify_alma_batch,
     async_classify_simple_batch,
 )
 from milpo.persistence import create_run, finish_run, store_results
 from milpo.prompting import build_labels
+
+# Tiers de modèles pour le flag --model (ablation 2x2)
+MODEL_TIERS: dict[str, str] = {
+    "flash-lite": "gemini-3.1-flash-lite-preview",
+    "flash": "gemini-3-flash-preview",
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -106,6 +113,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Désactive l'écriture en BDD (dry run).",
     )
+    parser.add_argument(
+        "--model",
+        choices=tuple(MODEL_TIERS),
+        default=None,
+        help=(
+            "Override le tier de modèle pour tous les appels LLM. "
+            "Sans ce flag : utilise les MODEL_* de l'environnement."
+        ),
+    )
 
     return parser
 
@@ -122,31 +138,52 @@ def _pick_dataset(args) -> str:
     return "alpha"
 
 
+def _pick_model(args) -> str | None:
+    return args.model  # None ou "flash" / "flash-lite"
+
+
+def _resolve_model(args) -> str | None:
+    """Retourne le nom complet du modèle à utiliser, ou None pour défaut env."""
+    tier = _pick_model(args)
+    return MODEL_TIERS[tier] if tier else None
+
+
+_BASE_SELECT = """
+    p.ig_media_id, p.caption,
+    p.media_type::text AS media_type,
+    p.media_product_type::text AS media_product_type,
+    p.timestamp AS posted_at,
+    cat.name AS gt_category,
+    vf.name AS gt_visual_format,
+    a.strategy::text AS gt_strategy
+"""
+
+_GT_JOINS = """
+    JOIN annotations a ON a.ig_media_id = p.ig_media_id
+    LEFT JOIN categories cat ON cat.id = a.category_id
+    LEFT JOIN visual_formats vf ON vf.id = a.visual_format_id
+"""
+
+
 def _load_posts(conn, dataset: str, since: str | None, limit: int | None) -> list[dict]:
-    """Charge les posts annotés d'un dataset, prêts à être classifiés."""
+    """Charge les posts annotés d'un dataset, avec leur ground truth."""
     params: dict = {}
     if dataset == "alpha":
-        query = """
-            SELECT p.ig_media_id, p.caption,
-                   p.media_type::text AS media_type,
-                   p.media_product_type::text AS media_product_type,
-                   p.timestamp AS posted_at
+        query = f"""
+            SELECT {_BASE_SELECT}
             FROM eval_sets es
             JOIN posts p ON p.ig_media_id = es.ig_media_id
-            JOIN annotations a ON a.ig_media_id = p.ig_media_id
+            {_GT_JOINS}
             WHERE es.set_name = 'alpha'
               AND a.visual_format_id IS NOT NULL
               AND a.doubtful = false
         """
     else:
-        query = """
-            SELECT p.ig_media_id, p.caption,
-                   p.media_type::text AS media_type,
-                   p.media_product_type::text AS media_product_type,
-                   p.timestamp AS posted_at
+        query = f"""
+            SELECT {_BASE_SELECT}
             FROM sample_posts sp
             JOIN posts p ON p.ig_media_id = sp.ig_media_id
-            JOIN annotations a ON a.ig_media_id = p.ig_media_id
+            {_GT_JOINS}
             WHERE sp.split = %(split)s
               AND a.visual_format_id IS NOT NULL
         """
@@ -161,6 +198,19 @@ def _load_posts(conn, dataset: str, since: str | None, limit: int | None) -> lis
         query += f" LIMIT {int(limit)}"
 
     return conn.execute(query, params).fetchall()
+
+
+def _compute_matches_in_memory(
+    results: list[PipelineResult], gt_by_post: dict[int, dict[str, str | None]]
+) -> dict[str, int]:
+    """Calcule les matches axe par axe depuis les GT chargées (sans BDD)."""
+    matches = {"category": 0, "visual_format": 0, "strategy": 0}
+    for result in results:
+        gt = gt_by_post.get(result.prediction.ig_media_id, {})
+        for axis in matches:
+            if getattr(result.prediction, axis) == gt.get(axis):
+                matches[axis] += 1
+    return matches
 
 
 def _build_progress(t0: float):
@@ -183,26 +233,29 @@ def _build_progress(t0: float):
     return on_progress
 
 
-def _models_config(mode: str) -> dict[str, str]:
+def _models_config(mode: str, model_override: str | None) -> dict[str, str]:
     if mode == "alma":
         return {
-            "descriptor_feed": MODEL_DESCRIPTOR_FEED,
-            "descriptor_reels": MODEL_DESCRIPTOR_REELS,
-            "classifier": MODEL_CLASSIFIER,
-            "classifier_visual_format": MODEL_CLASSIFIER_VISUAL_FORMAT,
+            "descriptor_feed": model_override or MODEL_DESCRIPTOR_FEED,
+            "descriptor_reels": model_override or MODEL_DESCRIPTOR_REELS,
+            "classifier": model_override or MODEL_CLASSIFIER,
+            "classifier_visual_format": model_override or MODEL_CLASSIFIER_VISUAL_FORMAT,
         }
-    return {"simple": MODEL_SIMPLE}
+    return {"simple": model_override or MODEL_SIMPLE}
 
 
 async def run_classification(args) -> int:
     mode = _pick_mode(args)
     dataset = _pick_dataset(args)
+    model_override = _resolve_model(args)
+    model_tier = _pick_model(args)
 
     conn = get_conn()
     t0 = time.monotonic()
 
     suffix = "_".join(
         [mode, dataset]
+        + ([f"model_{model_tier}"] if model_tier else [])
         + ([f"since_{args.since}"] if args.since else [])
         + ([f"limit_{args.limit}"] if args.limit else [])
     )
@@ -214,6 +267,15 @@ async def run_classification(args) -> int:
     raw_posts = _load_posts(conn, dataset, args.since, args.limit)
     log.info("Posts chargés : %d", len(raw_posts))
 
+    gt_by_post = {
+        row["ig_media_id"]: {
+            "category": row["gt_category"],
+            "visual_format": row["gt_visual_format"],
+            "strategy": row["gt_strategy"],
+        }
+        for row in raw_posts
+    }
+
     run_id: int | None = None
     if not args.no_persist:
         run_id = create_run(
@@ -222,9 +284,10 @@ async def run_classification(args) -> int:
                 "name": f"classification_{suffix}",
                 "pipeline_mode": mode,
                 "dataset": dataset,
+                "model_tier": model_tier,
                 "since": args.since,
                 "limit": args.limit,
-                "models": _models_config(mode),
+                "models": _models_config(mode, model_override),
             },
         )
         log.info("simulation_run id=%d", run_id)
@@ -271,7 +334,11 @@ async def run_classification(args) -> int:
     labels_by_scope = {scope: build_labels(conn, scope) for scope in ("FEED", "REELS")}
     on_progress = _build_progress(t0)
 
-    log.info("Classification en cours (mode %s)...", mode)
+    log.info(
+        "Classification en cours (mode %s%s)...",
+        mode,
+        f", modèle {model_tier}" if model_tier else "",
+    )
 
     if mode == "alma":
         results = await async_classify_alma_batch(
@@ -280,12 +347,15 @@ async def run_classification(args) -> int:
             max_concurrent_api=20,
             max_concurrent_posts=10,
             on_progress=on_progress,
+            descriptor_model=model_override,
+            classifier_model=model_override,
+            classifier_vf_model=model_override,
         )
     else:
         results = await async_classify_simple_batch(
             posts=post_inputs,
             labels_by_scope=labels_by_scope,
-            model=MODEL_SIMPLE,
+            model=model_override or MODEL_SIMPLE,
             max_concurrent=10,
             on_progress=on_progress,
         )
@@ -301,10 +371,11 @@ async def run_classification(args) -> int:
 
     n = len(results)
     total_api = sum(len(result.api_calls) for result in results)
-    matches = {"category": 0, "visual_format": 0, "strategy": 0}
+    matches = _compute_matches_in_memory(results, gt_by_post)
 
     if not args.no_persist and run_id is not None:
         log.info("Stockage en BDD...")
+        # store_results recompte les matches via le trigger SQL — autoritative.
         matches, total_api = store_results(conn, results, post_inputs, run_id)
         acc = {axis: (value / n if n else 0) for axis, value in matches.items()}
         finish_run(
@@ -330,11 +401,13 @@ async def run_classification(args) -> int:
     log.info("=" * 55)
     log.info("  Mode           : %s", mode)
     log.info("  Dataset        : %s", dataset)
+    if model_tier:
+        log.info("  Modèle         : %s (%s)", model_tier, model_override)
     log.info("  Posts          : %d", n)
     log.info("  Appels API     : %d", total_api)
     log.info("  Tokens         : %s in / %s out", f"{total_in:,}", f"{total_out:,}")
     log.info("  Durée          : %.0fs (%.1f min)", elapsed, elapsed / 60)
-    if not args.no_persist and n:
+    if n:
         log.info("")
         log.info(
             "  Accuracy catégorie     : %.1f%% (%d/%d)",
@@ -354,8 +427,9 @@ async def run_classification(args) -> int:
             matches["strategy"],
             n,
         )
-        log.info("")
-        log.info("  simulation_run_id = %d", run_id)
+        if run_id is not None:
+            log.info("")
+            log.info("  simulation_run_id = %d", run_id)
     log.info("✓ Classification terminée")
 
     conn.close()

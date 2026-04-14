@@ -352,6 +352,8 @@ async def _async_classify_from_features(
     strategy_labels: list[str],
     client: AsyncOpenAI,
     semaphore: asyncio.Semaphore,
+    classifier_model: str | None = None,
+    classifier_vf_model: str | None = None,
 ) -> PipelineResult:
     """Lance les 3 classifieurs text-only en parallèle à partir de features déjà calculées."""
     post_scope = post.media_product_type.upper()
@@ -361,12 +363,13 @@ async def _async_classify_from_features(
         "strategy": strategy_labels,
     }
 
+    base_classifier = classifier_model or MODEL_CLASSIFIER
+    vf_classifier = classifier_vf_model or classifier_model or MODEL_CLASSIFIER_VISUAL_FORMAT
+
     async def _classify(axis: str, labels: list[str]):
         # visual_format peut utiliser un modèle plus capable (override env) :
         # c'est l'axe le plus difficile (42 classes long-tail, règles subtiles).
-        model_for_axis = (
-            MODEL_CLASSIFIER_VISUAL_FORMAT if axis == "visual_format" else MODEL_CLASSIFIER
-        )
+        model_for_axis = vf_classifier if axis == "visual_format" else base_classifier
         label, conf, reasoning, clf_log = await async_call_classifier(
             client,
             model_for_axis,
@@ -416,12 +419,15 @@ async def async_classify_post_alma(
     strategy_labels: list[str],
     client: AsyncOpenAI,
     semaphore: asyncio.Semaphore,
+    descriptor_model: str | None = None,
+    classifier_model: str | None = None,
+    classifier_vf_model: str | None = None,
 ) -> PipelineResult:
     """Pipeline ASSIST complet (Alma + 3 classifieurs) pour un post."""
     routing = route(post.media_product_type)
     features, desc_log = await async_call_descriptor(
         client=client,
-        model=routing["model_descriptor"],
+        model=descriptor_model or routing["model_descriptor"],
         scope=post.media_product_type,
         media_urls=post.media_urls,
         media_types=post.media_types,
@@ -437,6 +443,8 @@ async def async_classify_post_alma(
         strategy_labels=strategy_labels,
         client=client,
         semaphore=semaphore,
+        classifier_model=classifier_model,
+        classifier_vf_model=classifier_vf_model,
     )
 
 
@@ -605,6 +613,9 @@ async def async_classify_alma_batch(
     max_concurrent_posts: int = 10,
     on_progress: Any = None,
     per_post_timeout: float = 480.0,
+    descriptor_model: str | None = None,
+    classifier_model: str | None = None,
+    classifier_vf_model: str | None = None,
 ) -> list[PipelineResult]:
     """Batch ASSIST : Alma (multimodal) + 3 classifieurs text-only par post."""
     client = get_async_client()
@@ -629,6 +640,9 @@ async def async_classify_alma_batch(
                         strategy_labels=labels["strategy"],
                         client=client,
                         semaphore=semaphore,
+                        descriptor_model=descriptor_model,
+                        classifier_model=classifier_model,
+                        classifier_vf_model=classifier_vf_model,
                     ),
                     timeout=per_post_timeout,
                 )
