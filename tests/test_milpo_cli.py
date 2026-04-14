@@ -88,11 +88,25 @@ class DispatchTests(unittest.TestCase):
         config = _models_config("simple", None)
         self.assertEqual(set(config), {"simple"})
 
-    def test_models_config_override_propagates(self) -> None:
-        alma = _models_config("alma", "gemini-3-flash-preview")
+    def test_tier_flash_lite_uses_flash_lite_everywhere(self) -> None:
+        alma = _models_config("alma", "flash-lite")
         for value in alma.values():
-            self.assertEqual(value, "gemini-3-flash-preview")
-        simple = _models_config("simple", "gemini-3-flash-preview")
+            self.assertEqual(value, "gemini-3.1-flash-lite-preview")
+        simple = _models_config("simple", "flash-lite")
+        self.assertEqual(simple["simple"], "gemini-3.1-flash-lite-preview")
+
+    def test_tier_flash_alma_keeps_cat_and_strat_on_flash_lite(self) -> None:
+        """En tier flash, alma met flash sur descripteur+vf, flash-lite ailleurs."""
+        alma = _models_config("alma", "flash")
+        self.assertEqual(alma["descriptor_feed"], "gemini-3-flash-preview")
+        self.assertEqual(alma["descriptor_reels"], "gemini-3-flash-preview")
+        self.assertEqual(alma["classifier_visual_format"], "gemini-3-flash-preview")
+        # category + strategy passent par MODEL_CLASSIFIER → reste léger
+        self.assertEqual(alma["classifier"], "gemini-3.1-flash-lite-preview")
+
+    def test_tier_flash_simple_uses_flash(self) -> None:
+        """En tier flash, simple met l'unique appel sur flash."""
+        simple = _models_config("simple", "flash")
         self.assertEqual(simple["simple"], "gemini-3-flash-preview")
 
 

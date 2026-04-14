@@ -48,11 +48,38 @@ from milpo.inference import (
 from milpo.persistence import create_run, finish_run, store_results
 from milpo.prompting import build_labels
 
-# Tiers de modèles pour le flag --model (ablation 2x2)
-MODEL_TIERS: dict[str, str] = {
-    "flash-lite": "gemini-3.1-flash-lite-preview",
-    "flash": "gemini-3-flash-preview",
-}
+# Modèles de référence
+_FLASH_LITE = "gemini-3.1-flash-lite-preview"
+_FLASH = "gemini-3-flash-preview"
+
+# Tiers de modèles pour le flag --model (ablation 2x2).
+#
+# Sémantique :
+# - flash-lite : tout en flash-lite (descripteur Alma, 3 classifieurs, simple).
+# - flash      : flash uniquement sur les passes critiques (descripteur Alma
+#                multimodal + classifieur visual_format) ; category et
+#                strategy restent en flash-lite. Pour --simple, l'unique
+#                appel est en flash.
+MODEL_TIERS: tuple[str, ...] = ("flash-lite", "flash")
+
+
+def _resolve_tier(mode: str, tier: str) -> dict[str, str]:
+    """Retourne le mapping {descriptor, classifier, classifier_vf, simple} pour un tier."""
+    if tier == "flash-lite":
+        return {
+            "descriptor": _FLASH_LITE,
+            "classifier": _FLASH_LITE,
+            "classifier_vf": _FLASH_LITE,
+            "simple": _FLASH_LITE,
+        }
+    if tier == "flash":
+        return {
+            "descriptor": _FLASH,        # Alma multimodal sur Flash
+            "classifier": _FLASH_LITE,   # category + strategy restent légers
+            "classifier_vf": _FLASH,     # axe difficile en Flash
+            "simple": _FLASH,            # seul appel multimodal
+        }
+    raise ValueError(f"Tier inconnu : {tier!r}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,11 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        choices=tuple(MODEL_TIERS),
+        choices=MODEL_TIERS,
         default=None,
         help=(
-            "Override le tier de modèle pour tous les appels LLM. "
-            "Sans ce flag : utilise les MODEL_* de l'environnement."
+            "Tier de modèle. flash-lite = tout flash-lite. flash = flash sur "
+            "descripteur+visual_format (et l'unique appel pour --simple), "
+            "flash-lite ailleurs. Sans ce flag : MODEL_* de l'environnement."
         ),
     )
 
@@ -142,10 +170,16 @@ def _pick_model(args) -> str | None:
     return args.model  # None ou "flash" / "flash-lite"
 
 
-def _resolve_model(args) -> str | None:
-    """Retourne le nom complet du modèle à utiliser, ou None pour défaut env."""
-    tier = _pick_model(args)
-    return MODEL_TIERS[tier] if tier else None
+def _resolve_models(mode: str, tier: str | None) -> dict[str, str | None]:
+    """Retourne les modèles à utiliser pour chaque rôle (None = défaut env)."""
+    if tier is None:
+        return {
+            "descriptor": None,
+            "classifier": None,
+            "classifier_vf": None,
+            "simple": None,
+        }
+    return _resolve_tier(mode, tier)
 
 
 _BASE_SELECT = """
@@ -233,22 +267,26 @@ def _build_progress(t0: float):
     return on_progress
 
 
-def _models_config(mode: str, model_override: str | None) -> dict[str, str]:
+def _models_config(mode: str, tier: str | None) -> dict[str, str]:
+    """Construit le bloc 'models' inscrit dans simulation_runs.config."""
+    resolved = _resolve_models(mode, tier)
     if mode == "alma":
         return {
-            "descriptor_feed": model_override or MODEL_DESCRIPTOR_FEED,
-            "descriptor_reels": model_override or MODEL_DESCRIPTOR_REELS,
-            "classifier": model_override or MODEL_CLASSIFIER,
-            "classifier_visual_format": model_override or MODEL_CLASSIFIER_VISUAL_FORMAT,
+            "descriptor_feed": resolved["descriptor"] or MODEL_DESCRIPTOR_FEED,
+            "descriptor_reels": resolved["descriptor"] or MODEL_DESCRIPTOR_REELS,
+            "classifier": resolved["classifier"] or MODEL_CLASSIFIER,
+            "classifier_visual_format": (
+                resolved["classifier_vf"] or MODEL_CLASSIFIER_VISUAL_FORMAT
+            ),
         }
-    return {"simple": model_override or MODEL_SIMPLE}
+    return {"simple": resolved["simple"] or MODEL_SIMPLE}
 
 
 async def run_classification(args) -> int:
     mode = _pick_mode(args)
     dataset = _pick_dataset(args)
-    model_override = _resolve_model(args)
     model_tier = _pick_model(args)
+    resolved_models = _resolve_models(mode, model_tier)
 
     conn = get_conn()
     t0 = time.monotonic()
@@ -287,7 +325,7 @@ async def run_classification(args) -> int:
                 "model_tier": model_tier,
                 "since": args.since,
                 "limit": args.limit,
-                "models": _models_config(mode, model_override),
+                "models": _models_config(mode, model_tier),
             },
         )
         log.info("simulation_run id=%d", run_id)
@@ -347,15 +385,15 @@ async def run_classification(args) -> int:
             max_concurrent_api=20,
             max_concurrent_posts=10,
             on_progress=on_progress,
-            descriptor_model=model_override,
-            classifier_model=model_override,
-            classifier_vf_model=model_override,
+            descriptor_model=resolved_models["descriptor"],
+            classifier_model=resolved_models["classifier"],
+            classifier_vf_model=resolved_models["classifier_vf"],
         )
     else:
         results = await async_classify_simple_batch(
             posts=post_inputs,
             labels_by_scope=labels_by_scope,
-            model=model_override or MODEL_SIMPLE,
+            model=resolved_models["simple"] or MODEL_SIMPLE,
             max_concurrent=10,
             on_progress=on_progress,
         )
@@ -402,7 +440,10 @@ async def run_classification(args) -> int:
     log.info("  Mode           : %s", mode)
     log.info("  Dataset        : %s", dataset)
     if model_tier:
-        log.info("  Modèle         : %s (%s)", model_tier, model_override)
+        models_used = _models_config(mode, model_tier)
+        log.info("  Tier modèle    : %s", model_tier)
+        for role, model_name in models_used.items():
+            log.info("    - %-26s %s", role + " :", model_name)
     log.info("  Posts          : %d", n)
     log.info("  Appels API     : %d", total_api)
     log.info("  Tokens         : %s in / %s out", f"{total_in:,}", f"{total_out:,}")
