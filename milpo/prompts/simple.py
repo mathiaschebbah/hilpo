@@ -21,41 +21,31 @@ from datetime import datetime
 from milpo.prompts import alma
 from milpo.prompts.classifier import PROCEDURE_BY_AXIS
 
-# ─── Bloc 1 — PERSONA (partagé avec Alma) + ROLE (spécifique simple) ───────
+# Structure miroir d'Alma : PERSONA + CONTEXT + OUTPUT_RULES.
+# - PERSONA : identique à Alma (réutilisé tel quel).
+# - CONTEXT : reprend la phrase d'entrée d'Alma mais remplace "tu décris"
+#   par la tâche de classification 3-axes.
+# - OUTPUT_RULES : format de sortie (reasoning CoT + label par enum).
 
-# Même persona que le percepteur Alma : analyste visuelle Views, méticuleuse
-# sur composition, logos, typographie. On le réutilise tel quel pour que le
-# mode --simple bénéficie de la même expertise embarquée que --alma et que
-# la comparaison alma vs simple ne mélange pas deux variables (architecture
-# + qualité du persona).
 PERSONA = alma.PERSONA
 
-ROLE = (
-    "Dans ce mode, tu ne te contentes pas de décrire : tu classifies\n"
-    "directement le post sur trois axes en un seul appel — visual_format,\n"
-    "category, strategy. Tu classes des formats éditoriaux, des sujets et\n"
-    "des intentions. Privilégie les signaux de forme sur le sujet traité\n"
-    "pour visual_format."
-)
-
-# ─── Bloc 2 — CONTEXT + OUTPUT (system) ─────────────────────────────────────
-
 CONTEXT = (
-    "Tu reçois les images ou la vidéo du post, sa caption, une grille\n"
-    "d'observation et les descriptions des classes pour chaque axe. Ces\n"
-    "descriptions sont ta grille de lecture : tu dois t'y référer et\n"
-    "raisonner en fonction d'elles."
+    "Tu reçois les images ou la vidéo d'un post Instagram de Views, sa caption,\n"
+    "et son audio si applicable, ainsi qu'une grille d'observation et les\n"
+    "descriptions des classes pour chaque axe.\n\n"
+    "Tu dois classifier ce post sur trois axes : visual_format, category, strategy.\n"
+    "La caption et les images sont à analyser de manière conjointe. Les descriptions\n"
+    "des classes sont ta grille de lecture : tu dois t'y référer et raisonner en\n"
+    "fonction d'elles. Privilégie les signaux de forme sur le sujet traité pour visual_format."
 )
 
-OUTPUT_REASONING = (
+OUTPUT_RULES = (
     "Dans reasoning, explicite pour chaque axe :\n"
     "1. Les signaux observés dans les images, la caption et la grille d'observation.\n"
     "2. Les règles SIGNAL_OBLIGATOIRE et EXCLUT appliquées.\n"
     "3. Les hésitations rencontrées.\n"
-    "Puis choisis un label par axe."
+    "Puis choisis un label par axe. Chaque label doit venir de l'enum correspondante fournie."
 )
-
-GUARDRAIL = "Chaque label doit venir de l'enum correspondante fournie."
 
 # ─── Bloc 3 — USER MESSAGE (headers) ────────────────────────────────────────
 
@@ -73,7 +63,7 @@ USER_CAPTION_MISSING = "(pas de caption)"
 
 def build_system() -> str:
     """Assemble le system message du classifieur simple multimodal."""
-    return f"{PERSONA}\n\n{ROLE}\n\n{CONTEXT}\n\n{OUTPUT_REASONING}\n\n{GUARDRAIL}"
+    return f"{PERSONA}\n\n{CONTEXT}\n\n{OUTPUT_RULES}"
 
 
 def build_user_intro(
