@@ -18,16 +18,24 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from milpo.prompts import alma
 from milpo.prompts.classifier import PROCEDURE_BY_AXIS
 
-# ─── Bloc 1 — ROLE (system) ─────────────────────────────────────────────────
+# ─── Bloc 1 — PERSONA (partagé avec Alma) + ROLE (spécifique simple) ───────
+
+# Même persona que le percepteur Alma : analyste visuelle Views, méticuleuse
+# sur composition, logos, typographie. On le réutilise tel quel pour que le
+# mode --simple bénéficie de la même expertise embarquée que --alma et que
+# la comparaison alma vs simple ne mélange pas deux variables (architecture
+# + qualité du persona).
+PERSONA = alma.PERSONA
 
 ROLE = (
-    "Tu es un classificateur multimodal de posts Instagram pour le média Views (@viewsfrance).\n"
-    "Ta tâche est de classifier un post sur trois axes en un seul appel : "
-    "visual_format, category, strategy.\n"
-    "Tu classes des formats éditoriaux, des sujets et des intentions. "
-    "Privilégie les signaux de forme sur le sujet traité pour visual_format."
+    "Dans ce mode, tu ne te contentes pas de décrire : tu classifies\n"
+    "directement le post sur trois axes en un seul appel — visual_format,\n"
+    "category, strategy. Tu classes des formats éditoriaux, des sujets et\n"
+    "des intentions. Privilégie les signaux de forme sur le sujet traité\n"
+    "pour visual_format."
 )
 
 # ─── Bloc 2 — CONTEXT + OUTPUT (system) ─────────────────────────────────────
@@ -65,7 +73,7 @@ USER_CAPTION_MISSING = "(pas de caption)"
 
 def build_system() -> str:
     """Assemble le system message du classifieur simple multimodal."""
-    return f"{ROLE}\n\n{CONTEXT}\n\n{OUTPUT_REASONING}\n\n{GUARDRAIL}"
+    return f"{PERSONA}\n\n{ROLE}\n\n{CONTEXT}\n\n{OUTPUT_REASONING}\n\n{GUARDRAIL}"
 
 
 def build_user_intro(
