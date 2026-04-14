@@ -109,10 +109,14 @@ def get_async_client() -> AsyncOpenAI:
         raise RuntimeError(
             "Aucune clé API configurée (GOOGLE_API_KEY ou OPENROUTER_API_KEY)."
         )
+    # Timeout HTTP client : 30s. Google AI throttle silencieusement certaines
+    # requêtes multimodales en concurrence (socket pendant sans 429 ni erreur).
+    # À 30s + 3 retries avec backoff exponentiel (1+2+4s), un hang est coupé
+    # en ~97s au lieu de ~367s avec l'ancien timeout 120s.
     return AsyncOpenAI(
         base_url=LLM_BASE_URL,
         api_key=LLM_API_KEY,
-        timeout=120.0,
+        timeout=30.0,
     )
 
 
@@ -631,7 +635,7 @@ async def async_classify_alma_batch(
     posts: list[PostInput],
     labels_by_scope: dict[str, dict[str, list[str]]],
     max_concurrent_api: int = 20,
-    max_concurrent_posts: int = 10,
+    max_concurrent_posts: int = 5,
     on_progress: Any = None,
     per_post_timeout: float = 480.0,
     descriptor_model: str | None = None,
@@ -695,7 +699,7 @@ async def async_classify_simple_batch(
     posts: list[PostInput],
     labels_by_scope: dict[str, dict[str, list[str]]],
     model: str = MODEL_SIMPLE,
-    max_concurrent: int = 10,
+    max_concurrent: int = 5,
     on_progress: Any = None,
     per_post_timeout: float = 480.0,
 ) -> list[PipelineResult]:

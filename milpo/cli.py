@@ -384,7 +384,7 @@ async def run_classification(args) -> int:
             posts=post_inputs,
             labels_by_scope=labels_by_scope,
             max_concurrent_api=20,
-            max_concurrent_posts=10,
+            max_concurrent_posts=5,
             on_progress=on_progress,
             descriptor_model=resolved_models["descriptor"],
             classifier_model=resolved_models["classifier"],
@@ -395,7 +395,7 @@ async def run_classification(args) -> int:
             posts=post_inputs,
             labels_by_scope=labels_by_scope,
             model=resolved_models["simple"] or MODEL_SIMPLE,
-            max_concurrent=10,
+            max_concurrent=5,
             on_progress=on_progress,
         )
 
