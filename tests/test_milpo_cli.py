@@ -95,14 +95,16 @@ class DispatchTests(unittest.TestCase):
         simple = _models_config("simple", "flash-lite")
         self.assertEqual(simple["simple"], "gemini-3.1-flash-lite-preview")
 
-    def test_tier_flash_alma_keeps_cat_and_strat_on_flash_lite(self) -> None:
-        """En tier flash, alma met flash sur descripteur+vf, flash-lite ailleurs."""
+    def test_tier_flash_alma_only_swaps_visual_format(self) -> None:
+        """Reproduit le design des runs 90-91 : flash uniquement sur visual_format."""
         alma = _models_config("alma", "flash")
-        self.assertEqual(alma["descriptor_feed"], "gemini-3-flash-preview")
-        self.assertEqual(alma["descriptor_reels"], "gemini-3-flash-preview")
-        self.assertEqual(alma["classifier_visual_format"], "gemini-3-flash-preview")
-        # category + strategy passent par MODEL_CLASSIFIER → reste léger
+        # descripteur reste flash-lite (cf. api_calls des runs 90-91)
+        self.assertEqual(alma["descriptor_feed"], "gemini-3.1-flash-lite-preview")
+        self.assertEqual(alma["descriptor_reels"], "gemini-3.1-flash-lite-preview")
+        # category + strategy restent flash-lite
         self.assertEqual(alma["classifier"], "gemini-3.1-flash-lite-preview")
+        # seul visual_format passe à flash
+        self.assertEqual(alma["classifier_visual_format"], "gemini-3-flash-preview")
 
     def test_tier_flash_simple_uses_flash(self) -> None:
         """En tier flash, simple met l'unique appel sur flash."""

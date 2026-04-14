@@ -54,12 +54,13 @@ _FLASH = "gemini-3-flash-preview"
 
 # Tiers de modèles pour le flag --model (ablation 2x2).
 #
-# Sémantique :
+# Sémantique reproduisant le design historique des runs 90-91 (pipeline
+# classique) et 93 (E2E) :
 # - flash-lite : tout en flash-lite (descripteur Alma, 3 classifieurs, simple).
-# - flash      : flash uniquement sur les passes critiques (descripteur Alma
-#                multimodal + classifieur visual_format) ; category et
-#                strategy restent en flash-lite. Pour --simple, l'unique
-#                appel est en flash.
+# - flash      : pour --alma, flash UNIQUEMENT sur visual_format (l'axe
+#                difficile, 57 classes long-tail) ; descripteur et
+#                classifieurs category/strategy restent en flash-lite.
+#                Pour --simple, l'unique appel multimodal est en flash.
 MODEL_TIERS: tuple[str, ...] = ("flash-lite", "flash")
 
 
@@ -74,10 +75,10 @@ def _resolve_tier(mode: str, tier: str) -> dict[str, str]:
         }
     if tier == "flash":
         return {
-            "descriptor": _FLASH,        # Alma multimodal sur Flash
-            "classifier": _FLASH_LITE,   # category + strategy restent légers
-            "classifier_vf": _FLASH,     # axe difficile en Flash
-            "simple": _FLASH,            # seul appel multimodal
+            "descriptor": _FLASH_LITE,   # descripteur reste léger (cf. runs 90-91)
+            "classifier": _FLASH_LITE,   # category + strategy légers
+            "classifier_vf": _FLASH,     # seul axe qui swap vers Flash
+            "simple": _FLASH,            # unique appel multimodal E2E
         }
     raise ValueError(f"Tier inconnu : {tier!r}")
 
