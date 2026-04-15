@@ -188,6 +188,7 @@ async def async_call_descriptor(
                     model=model,
                     messages=messages,
                     temperature=0.0,
+                    max_tokens=8192,
                 )
             except Exception as exc:
                 log.warning("Descriptor appel échoué (attempt %d): %s", attempt + 1, exc)
@@ -276,6 +277,7 @@ async def async_call_classifier(
                     tool_choice="auto",
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
+                    max_tokens=8192,
                 )
             except Exception as exc:
                 log.warning("Classifier %s échoué (attempt %d): %s", axis, attempt + 1, exc)
@@ -514,6 +516,7 @@ async def async_call_simple(
                     tool_choice="auto",
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
+                    max_tokens=8192,
                 )
             except Exception as exc:
                 log.warning("Simple appel échoué (attempt %d): %s", attempt + 1, exc)
