@@ -61,13 +61,19 @@ class PostInput:
 
 @dataclass
 class ApiCallLog:
-    """Log d'un appel API pour traçabilité."""
+    """Log d'un appel API pour traçabilité.
+
+    output_tokens = reasoning + completion visible (= total - prompt côté Gemini).
+    reasoning_tokens = chain-of-thought interne (sous-ensemble d'output_tokens).
+    completion visible = output_tokens - reasoning_tokens.
+    """
 
     agent: str
     model: str
     input_tokens: int
     output_tokens: int
     latency_ms: int
+    reasoning_tokens: int = 0
 
 
 @dataclass
@@ -208,11 +214,13 @@ async def async_call_descriptor(
 
         # Gemini facture reasoning au tarif output mais ne le compte pas
         # dans completion_tokens. Le vrai output = total - prompt (inclut
-        # reasoning + completion visible). Sans cette correction, le coût
-        # est sous-estimé de ~85% avec reasoning_effort=medium.
+        # reasoning + completion visible). reasoning_tokens loggué à part
+        # pour analyse post-run (part de CoT vs réponse visible).
         usage = response.usage
         in_tok = usage.prompt_tokens if usage else 0
+        completion_tok = usage.completion_tokens if usage else 0
         out_tok = (usage.total_tokens - usage.prompt_tokens) if usage else 0
+        reasoning_tok = max(0, out_tok - completion_tok)
         if _on_api_call:
             _on_api_call("descriptor", model, latency_ms, in_tok, out_tok, "ok")
         return raw, ApiCallLog(
@@ -220,6 +228,7 @@ async def async_call_descriptor(
             model=model,
             input_tokens=in_tok,
             output_tokens=out_tok,
+            reasoning_tokens=reasoning_tok,
             latency_ms=latency_ms,
         )
 
@@ -337,12 +346,13 @@ async def async_call_classifier(
             ) from exc
 
         # Gemini facture reasoning au tarif output mais ne le compte pas
-        # dans completion_tokens. Le vrai output = total - prompt (inclut
-        # reasoning + completion visible). Sans cette correction, le coût
-        # est sous-estimé de ~85% avec reasoning_effort=medium.
+        # dans completion_tokens. output_tokens = total - prompt (reasoning
+        # + completion). reasoning_tokens loggué à part pour analyse.
         usage = response.usage
         in_tok = usage.prompt_tokens if usage else 0
+        completion_tok = usage.completion_tokens if usage else 0
         out_tok = (usage.total_tokens - usage.prompt_tokens) if usage else 0
+        reasoning_tok = max(0, out_tok - completion_tok)
         if _on_api_call:
             _on_api_call(axis, model, latency_ms, in_tok, out_tok, "ok")
         return label, confidence, reasoning, ApiCallLog(
@@ -350,6 +360,7 @@ async def async_call_classifier(
             model=model,
             input_tokens=in_tok,
             output_tokens=out_tok,
+            reasoning_tokens=reasoning_tok,
             latency_ms=latency_ms,
         )
 
@@ -565,12 +576,13 @@ async def async_call_simple(
             raise RuntimeError("Simple: arguments invalides après retries") from exc
 
         # Gemini facture reasoning au tarif output mais ne le compte pas
-        # dans completion_tokens. Le vrai output = total - prompt (inclut
-        # reasoning + completion visible). Sans cette correction, le coût
-        # est sous-estimé de ~85% avec reasoning_effort=medium.
+        # dans completion_tokens. output_tokens = total - prompt (reasoning
+        # + completion). reasoning_tokens loggué à part pour analyse.
         usage = response.usage
         in_tok = usage.prompt_tokens if usage else 0
+        completion_tok = usage.completion_tokens if usage else 0
         out_tok = (usage.total_tokens - usage.prompt_tokens) if usage else 0
+        reasoning_tok = max(0, out_tok - completion_tok)
         if _on_api_call:
             _on_api_call("simple", model, latency_ms, in_tok, out_tok, "ok")
         return (
@@ -582,6 +594,7 @@ async def async_call_simple(
                 model=model,
                 input_tokens=in_tok,
                 output_tokens=out_tok,
+                reasoning_tokens=reasoning_tok,
                 latency_ms=latency_ms,
             ),
         )

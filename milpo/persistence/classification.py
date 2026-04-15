@@ -70,6 +70,7 @@ def persist_api_calls(
             cost_usd=None,
             latency_ms=call.latency_ms,
             simulation_run_id=run_id,
+            reasoning_tokens=call.reasoning_tokens,
         )
         total_api += 1
     return total_api

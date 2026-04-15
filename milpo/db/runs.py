@@ -49,13 +49,15 @@ def store_api_call(
     cost_usd: float | None,
     latency_ms: int,
     simulation_run_id: int | None = None,
+    reasoning_tokens: int = 0,
 ) -> int:
     row = conn.execute(
         """
         INSERT INTO api_calls
             (call_type, agent, model_name, prompt_version_id, ig_media_id,
-             input_tokens, output_tokens, cost_usd, latency_ms, simulation_run_id)
-        VALUES (%s::api_call_type, %s::agent_type, %s, %s, %s, %s, %s, %s, %s, %s)
+             input_tokens, output_tokens, cost_usd, latency_ms, simulation_run_id,
+             reasoning_tokens)
+        VALUES (%s::api_call_type, %s::agent_type, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -69,6 +71,7 @@ def store_api_call(
             cost_usd,
             latency_ms,
             simulation_run_id,
+            reasoning_tokens,
         ),
     ).fetchone()
     conn.commit()
