@@ -757,9 +757,13 @@ async def async_classify_simple_batch(
     model: str = MODEL_SIMPLE,
     max_concurrent: int = 5,
     on_progress: Any = None,
-    per_post_timeout: float = 480.0,
+    per_post_timeout: float = 900.0,
 ) -> list[PipelineResult]:
-    """Batch --simple : 1 appel multimodal ASSIST par post (3 labels en une fois)."""
+    """Batch --simple : 1 appel multimodal ASSIST par post (3 labels en une fois).
+
+    Timeout 900s (vs 480s pour alma) : simple envoie tout en 1 appel
+    (images + 3 taxonomies + questions ASSIST = ~50k tokens) → plus lent.
+    """
     client = get_async_client()
     semaphore = asyncio.Semaphore(max_concurrent)
 
