@@ -67,7 +67,7 @@ _FLASH = "gemini-3-flash-preview"
 #                 multimodal images+audio, tool calling natif). Coût $0.
 _QWEN = "qwen/qwen3.5-flash-02-23"
 _GEMMA4 = "gemma4:e4b"
-MODEL_TIERS: tuple[str, ...] = ("flash-lite", "flash", "full-flash", "qwen", "gemma4", "no-assist")
+MODEL_TIERS: tuple[str, ...] = ("flash-lite", "flash", "full-flash", "qwen", "gemma4")
 
 
 def _resolve_tier(mode: str, tier: str) -> dict[str, str]:
@@ -99,13 +99,6 @@ def _resolve_tier(mode: str, tier: str) -> dict[str, str]:
             "classifier": _QWEN,         # text-only → OpenRouter Qwen
             "classifier_vf": _QWEN,
             "simple": _FLASH_LITE,       # fallback flash-lite (simple = multimodal)
-        }
-    if tier == "no-assist":
-        return {
-            "descriptor": _FLASH_LITE,
-            "classifier": _FLASH_LITE,
-            "classifier_vf": _FLASH_LITE,
-            "simple": _FLASH_LITE,
         }
     if tier == "gemma4":
         return {
@@ -193,6 +186,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Tier de modèle. flash-lite = tout flash-lite. flash = flash sur "
             "descripteur+visual_format (et l'unique appel pour --simple), "
             "flash-lite ailleurs. Sans ce flag : MODEL_* de l'environnement."
+        ),
+    )
+    parser.add_argument(
+        "--no-assist",
+        action="store_true",
+        help=(
+            "Mode simple uniquement : envoie les taxonomies YAML scopées "
+            "SANS questions ASSIST ni procédures par axe. Ablation du "
+            "prompt engineering ASSIST. Combinable avec --model."
         ),
     )
 
@@ -359,6 +361,7 @@ async def run_classification(args) -> int:
     suffix = "_".join(
         [mode, dataset]
         + ([f"model_{model_tier}"] if model_tier else [])
+        + (["no_assist"] if getattr(args, "no_assist", False) else [])
         + ([f"since_{args.since}"] if args.since else [])
         + ([f"limit_{args.limit}"] if args.limit else [])
     )
@@ -483,7 +486,7 @@ async def run_classification(args) -> int:
             model=resolved_models["simple"] or MODEL_SIMPLE,
             max_concurrent=10,
             on_progress=on_progress,
-            no_assist=(model_tier == "no-assist"),
+            no_assist=getattr(args, "no_assist", False),
         )
 
     errors = len(post_inputs) - len(results)
