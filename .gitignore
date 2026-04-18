@@ -34,8 +34,13 @@ build/
 .vscode/
 .idea/
 
+
+*.pdf
 # Claude Code
 .claude/*.local.*
 !.claude/hooks/
 *.playwright-mcp/
 uv.lock
+
+docs/
+

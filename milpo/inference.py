@@ -531,11 +531,12 @@ async def async_call_simple(
     semaphore: asyncio.Semaphore,
     temperature: float = 0.0,
     reasoning_effort: str = "low",
-    no_assist: bool = False,
+    include_grille: bool = True,
+    include_procedure: bool = True,
 ) -> tuple[dict[str, str], str, str, ApiCallLog]:
     """Appelle le classifieur simple multimodal (1 appel → 3 labels).
 
-    Si no_assist=True : taxonomies seules, sans questions ASSIST ni procédures.
+    include_grille / include_procedure : ablation factorielle ASSIST.
     Retourne ({visual_format, category, strategy}, confidence, reasoning, log).
     """
     post_scope = post.media_product_type.upper()
@@ -545,7 +546,8 @@ async def async_call_simple(
         caption=post.caption,
         post_scope=post_scope,
         posted_at=post.posted_at,
-        no_assist=no_assist,
+        include_grille=include_grille,
+        include_procedure=include_procedure,
     )
     tool = build_simple_tool(vf_labels, cat_labels, strat_labels)
     tool_name = tool["function"]["name"]
@@ -660,7 +662,8 @@ async def async_classify_post_simple(
     client: AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     model: str = MODEL_SIMPLE,
-    no_assist: bool = False,
+    include_grille: bool = True,
+    include_procedure: bool = True,
 ) -> PipelineResult:
     """Pipeline --simple : 1 appel multimodal pour un post."""
     labels_by_axis, confidence, reasoning, clf_log = await async_call_simple(
@@ -671,7 +674,8 @@ async def async_classify_post_simple(
         cat_labels=category_labels,
         strat_labels=strategy_labels,
         semaphore=semaphore,
-        no_assist=no_assist,
+        include_grille=include_grille,
+        include_procedure=include_procedure,
     )
     prediction = _build_post_prediction(
         ig_media_id=post.ig_media_id,
@@ -784,12 +788,13 @@ async def async_classify_simple_batch(
     max_concurrent: int = 5,
     on_progress: Any = None,
     per_post_timeout: float = 900.0,
-    no_assist: bool = False,
+    include_grille: bool = True,
+    include_procedure: bool = True,
 ) -> list[PipelineResult]:
     """Batch --simple : 1 appel multimodal par post (3 labels en une fois).
 
     Timeout 900s (vs 480s pour alma) : simple envoie tout en 1 appel.
-    Si no_assist=True : taxonomies seules, sans questions ASSIST ni procédures.
+    include_grille / include_procedure : ablation factorielle ASSIST.
     """
     client = get_async_client()
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -802,39 +807,41 @@ async def async_classify_simple_batch(
         nonlocal done_count, error_count
         scope = post.media_product_type.upper()
         labels = labels_by_scope[scope]
-        watchdog = asyncio.create_task(
-            _watchdog_slow_post(post.ig_media_id, len(post.media_urls))
-        )
-        try:
-            results[idx] = await asyncio.wait_for(
-                async_classify_post_simple(
-                    post=post,
-                    category_labels=labels["category"],
-                    visual_format_labels=labels["visual_format"],
-                    strategy_labels=labels["strategy"],
-                    client=client,
-                    semaphore=semaphore,
-                    model=model,
-                    no_assist=no_assist,
-                ),
-                timeout=per_post_timeout,
+        async with semaphore:
+            watchdog = asyncio.create_task(
+                _watchdog_slow_post(post.ig_media_id, len(post.media_urls))
             )
-        except asyncio.TimeoutError:
-            error_count += 1
-            log.warning("Post %s TIMEOUT (%ds)", post.ig_media_id, per_post_timeout)
-            if _on_api_call:
-                _on_api_call(
-                    "timeout", "—", int(per_post_timeout * 1000), 0, 0, "error"
+            try:
+                results[idx] = await asyncio.wait_for(
+                    async_classify_post_simple(
+                        post=post,
+                        category_labels=labels["category"],
+                        visual_format_labels=labels["visual_format"],
+                        strategy_labels=labels["strategy"],
+                        client=client,
+                        semaphore=asyncio.Semaphore(1),
+                        model=model,
+                        include_grille=include_grille,
+                        include_procedure=include_procedure,
+                    ),
+                    timeout=per_post_timeout,
                 )
-        except Exception as exc:
-            error_count += 1
-            log.error("Post %s échoué: %s", post.ig_media_id, exc)
-        finally:
-            watchdog.cancel()
+            except asyncio.TimeoutError:
+                error_count += 1
+                log.warning("Post %s TIMEOUT (%ds)", post.ig_media_id, per_post_timeout)
+                if _on_api_call:
+                    _on_api_call(
+                        "timeout", "—", int(per_post_timeout * 1000), 0, 0, "error"
+                    )
+            except Exception as exc:
+                error_count += 1
+                log.error("Post %s échoué: %s", post.ig_media_id, exc)
+            finally:
+                watchdog.cancel()
 
-        done_count += 1
-        if on_progress:
-            on_progress(done_count, len(posts), error_count)
+            done_count += 1
+            if on_progress:
+                on_progress(done_count, len(posts), error_count)
 
     await asyncio.gather(*[_process_one(i, p) for i, p in enumerate(posts)])
     return [result for result in results if result is not None]

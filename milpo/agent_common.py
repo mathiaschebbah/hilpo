@@ -71,16 +71,18 @@ def build_simple_messages(
     post_scope: str,
     posted_at: datetime | None = None,
     *,
-    no_assist: bool = False,
+    include_grille: bool = True,
+    include_procedure: bool = True,
 ) -> list[dict]:
     """Construit les messages pour le classifieur simple (1 appel multimodal).
 
-    Si no_assist=True : taxonomies seules, sans questions ASSIST ni procédures.
+    include_grille=True    : grille d'observation ASSIST injectée.
+    include_procedure=True : règles de priorité PROCEDURE_BY_AXIS injectées.
     """
     del media_types
 
     scope = post_scope.upper()
-    rendered_questions = render_questions_for_scope(scope)
+    rendered_questions = render_questions_for_scope(scope) if include_grille else ""
     vf_taxonomy = render_taxonomy_for_scope(scope)
     cat_taxonomy = render_taxonomy_for_scope("CATEGORY")
     strat_taxonomy = render_taxonomy_for_scope("STRATEGY")
@@ -90,7 +92,8 @@ def build_simple_messages(
         vf_taxonomy=vf_taxonomy,
         cat_taxonomy=cat_taxonomy,
         strat_taxonomy=strat_taxonomy,
-        no_assist=no_assist,
+        include_grille=include_grille,
+        include_procedure=include_procedure,
     )
     content: list[dict] = [{"type": "text", "text": intro}]
     for url in media_urls:

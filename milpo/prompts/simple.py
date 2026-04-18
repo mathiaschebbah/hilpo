@@ -70,40 +70,38 @@ def build_user_intro(
     cat_taxonomy: str,
     strat_taxonomy: str,
     *,
-    no_assist: bool = False,
+    include_grille: bool = True,
+    include_procedure: bool = True,
 ) -> str:
     """Texte qui ouvre le user message, juste avant les images.
 
-    Si no_assist=True : envoie seulement les taxonomies, sans questions
-    ASSIST ni procédures par axe. Point de référence naïf pour l'ablation.
+    include_grille=True    : injecte la grille d'observation ASSIST.
+    include_procedure=True : injecte les règles de priorité PROCEDURE_BY_AXIS.
+
+    Les deux flags sont indépendants pour permettre l'ablation factorielle :
+    - (True, True)   = ASSIST complet
+    - (True, False)  = grille seule (observation structurée, pas d'arbitrage)
+    - (False, True)  = procédure seule (arbitrage, pas d'observation)
+    - (False, False) = no-ASSIST (taxonomies seules)
     """
-    if no_assist:
-        return (
-            f"{USER_VF_HEADER}\n\n"
-            f"{vf_taxonomy}\n\n"
-            f"{USER_CAT_HEADER}\n\n"
-            f"{cat_taxonomy}\n\n"
-            f"{USER_STRAT_HEADER}\n\n"
-            f"{strat_taxonomy}\n\n"
-            f"{USER_MEDIA_LABEL}"
+    sections: list[str] = []
+
+    if include_grille:
+        sections.append(f"{USER_QUESTIONS_HEADER}\n\n{rendered_questions}")
+
+    sections.append(f"{USER_VF_HEADER}\n\n{vf_taxonomy}")
+    sections.append(f"{USER_CAT_HEADER}\n\n{cat_taxonomy}")
+    sections.append(f"{USER_STRAT_HEADER}\n\n{strat_taxonomy}")
+
+    if include_procedure:
+        procedure_lines = "\n".join(
+            f"{axis} : {PROCEDURE_BY_AXIS[axis]}"
+            for axis in ("visual_format", "category", "strategy")
         )
-    procedure_lines = "\n".join(
-        f"{axis} : {PROCEDURE_BY_AXIS[axis]}"
-        for axis in ("visual_format", "category", "strategy")
-    )
-    return (
-        f"{USER_QUESTIONS_HEADER}\n\n"
-        f"{rendered_questions}\n\n"
-        f"{USER_VF_HEADER}\n\n"
-        f"{vf_taxonomy}\n\n"
-        f"{USER_CAT_HEADER}\n\n"
-        f"{cat_taxonomy}\n\n"
-        f"{USER_STRAT_HEADER}\n\n"
-        f"{strat_taxonomy}\n\n"
-        f"{USER_PROCEDURE_HEADER}\n"
-        f"{procedure_lines}\n\n"
-        f"{USER_MEDIA_LABEL}"
-    )
+        sections.append(f"{USER_PROCEDURE_HEADER}\n{procedure_lines}")
+
+    sections.append(USER_MEDIA_LABEL)
+    return "\n\n".join(sections)
 
 
 def _format_posted_at(posted_at: datetime | None) -> str:

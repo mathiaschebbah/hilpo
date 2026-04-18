@@ -192,9 +192,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-assist",
         action="store_true",
         help=(
-            "Mode simple uniquement : envoie les taxonomies YAML scopées "
-            "SANS questions ASSIST ni procédures par axe. Ablation du "
-            "prompt engineering ASSIST. Combinable avec --model."
+            "Mode simple uniquement : raccourci pour --no-grille ET "
+            "--no-procedure. Envoie les taxonomies YAML scopées seules. "
+            "Combinable avec --model."
+        ),
+    )
+    parser.add_argument(
+        "--no-grille",
+        action="store_true",
+        help=(
+            "Mode simple uniquement : supprime la grille d'observation ASSIST "
+            "(questions CAPTION_APPEL_ACTION, CHIFFRE_DOMINANT, etc.) tout en "
+            "gardant les procédures par axe. Ablation factorielle."
+        ),
+    )
+    parser.add_argument(
+        "--no-procedure",
+        action="store_true",
+        help=(
+            "Mode simple uniquement : supprime PROCEDURE_BY_AXIS (règles de "
+            "priorité format/sujet/intention) tout en gardant la grille "
+            "d'observation ASSIST. Ablation factorielle."
         ),
     )
 
@@ -358,10 +376,24 @@ async def run_classification(args) -> int:
     conn = get_conn()
     t0 = time.monotonic()
 
+    # --no-assist = raccourci pour --no-grille ET --no-procedure
+    no_grille = getattr(args, "no_grille", False) or getattr(args, "no_assist", False)
+    no_procedure = getattr(args, "no_procedure", False) or getattr(args, "no_assist", False)
+    args._resolved_no_grille = no_grille
+    args._resolved_no_procedure = no_procedure
+
+    suffix_tags = []
+    if no_grille and no_procedure:
+        suffix_tags.append("no_assist")
+    elif no_grille:
+        suffix_tags.append("no_grille")
+    elif no_procedure:
+        suffix_tags.append("no_procedure")
+
     suffix = "_".join(
         [mode, dataset]
         + ([f"model_{model_tier}"] if model_tier else [])
-        + (["no_assist"] if getattr(args, "no_assist", False) else [])
+        + suffix_tags
         + ([f"since_{args.since}"] if args.since else [])
         + ([f"limit_{args.limit}"] if args.limit else [])
     )
@@ -399,6 +431,8 @@ async def run_classification(args) -> int:
                 "since": args.since,
                 "limit": args.limit,
                 "models": _models_config(mode, model_tier),
+                "include_grille": not no_grille,
+                "include_procedure": not no_procedure,
             },
         )
         log.info("simulation_run id=%d", run_id)
@@ -466,12 +500,21 @@ async def run_classification(args) -> int:
         clf_client = ollama_client
         log.info("Pipeline complète via Ollama local (%s)", desc_model)
 
+    # Concurrence adaptée au quota par modèle :
+    # - flash-lite : 4M tokens/min → 10 posts parallèles OK
+    # - flash/full-flash : 2M tokens/min → 2 posts parallèles max
+    # - gemma4 (local) : 2 posts parallèles (inférence locale)
+    is_flash_tier = model_tier in ("flash", "full-flash")
+    alma_concurrent_posts = 2 if (is_flash_tier or "gemma4" in desc_model) else 10
+    alma_concurrent_api = 8 if is_flash_tier else 20
+    simple_concurrent = 3 if is_flash_tier else 10
+
     if mode == "alma":
         results = await async_classify_alma_batch(
             posts=post_inputs,
             labels_by_scope=labels_by_scope,
-            max_concurrent_api=20,
-            max_concurrent_posts=10 if "gemma4" not in desc_model else 2,
+            max_concurrent_api=alma_concurrent_api,
+            max_concurrent_posts=alma_concurrent_posts,
             on_progress=on_progress,
             descriptor_model=resolved_models["descriptor"],
             classifier_model=resolved_models["classifier"],
@@ -484,9 +527,10 @@ async def run_classification(args) -> int:
             posts=post_inputs,
             labels_by_scope=labels_by_scope,
             model=resolved_models["simple"] or MODEL_SIMPLE,
-            max_concurrent=10,
+            max_concurrent=simple_concurrent,
             on_progress=on_progress,
-            no_assist=getattr(args, "no_assist", False),
+            include_grille=not args._resolved_no_grille,
+            include_procedure=not args._resolved_no_procedure,
         )
 
     errors = len(post_inputs) - len(results)
